@@ -43,6 +43,12 @@
     msgInvalidID db 13,10, "Invalid Food ID! Please enter 0-4 or 9.", 13,10, "$"
     msgPressKey db "Press any key to continue...", 13,10, "$"
     msgNoOrders db 13,10, "No items in cart!", 13,10, "$"
+    
+    ; Restock messages
+    msgRestockTitle db 13,10, "=== Restock Inventory ===", 13,10, "$"
+    msgSelectRestock db "Enter Food ID (0-4) or 9 to finish: $"
+    msgRestockSuccess db 13,10, "Item restocked!", 13,10, "$"
+    msgRestockInvalidID db 13,10, "Invalid Food ID! Please enter 0-4 or 9.", 13,10, "$"
 
     ; Checkout messages
     msgCheckoutTitle db 13,10, "=== Checkout ===", 13,10, "$"
@@ -50,12 +56,17 @@
     msgCartItem db "Item: $"
     msgQuantity db " | Qty: $"
     msgItemPrice db " | Price: RM$"
-    msgTotalPrice db 13,10, "Total Amount: RM$"
+    msgTotalPrice db 13,10, "Subtotal: RM$"
+    msgTaxAmount db 13,10, "Tax (6%): RM$"
+    msgFinalTotal db 13,10, "Total Amount: RM$"
     msgThankYou db 13,10, "Thank you for your order!", 13,10, "$"
 
     ; Cart tracking arrays
     CartItems db 5 dup(0)      ; Track quantity of each item in cart
     CartTotal dw 0             ; Total amount
+
+    TempSubtotal dw 0
+    TempTax dw 0
 
 .code
 main:
@@ -201,10 +212,71 @@ EndShow:
     jmp MenuLoop
 
 Restock:
-    call NewLine
-    lea dx, msgMenu4
+    lea dx, msgRestockTitle
     call PrintString
-    jmp MenuLoop
+    call RestockLoop
+    jmp MenuLoop  ; Return to main menu directly
+
+RestockLoop:
+    ; Show current menu
+    lea dx, header
+    call PrintString
+    call DisplayAllItems
+    
+    ; Get user input
+    lea dx, msgSelectRestock
+    call PrintString
+    
+    mov ah, 01h
+    int 21h
+    mov bl, al
+    call NewLine
+    
+    ; Check if user wants to finish
+    cmp bl, '9'
+    je RestockFinish
+    
+    ; Process the restock
+    call ProcessRestock
+    jmp RestockLoop
+
+RestockFinish:
+    ret
+
+; SEPARATE FUNCTION FOR RESTOCK PROCESSING
+ProcessRestock:
+    ; Validate input (must be 0-4)
+    cmp bl, '0'
+    jb RestockInvalid
+    cmp bl, '4'
+    ja RestockInvalid
+    
+    ; Convert character to number
+    sub bl, '0'
+    mov si, bx
+    
+    ; Add 10 units to inventory
+    call AddRestockItem
+    ret
+
+RestockInvalid:
+    lea dx, msgRestockInvalidID
+    call PrintString
+    ret
+
+; FUNCTION TO ADD RESTOCK ITEM
+AddRestockItem:
+    ; Add 10 units to inventory
+    mov bx, si
+    shl bx, 1
+    mov ax, [FoodQty + bx]
+    add ax, 10           ; Add 10 units
+    mov [FoodQty + bx], ax
+    
+    ; Show success message
+    lea dx, msgRestockSuccess
+    call PrintString
+    ret
 
 DoLogout:
     lea dx, msgLogout
@@ -344,7 +416,7 @@ CheckEmptyCheckout:
     call PrintString
     call NewLine
     call ShowAllCartItems
-    call ShowCheckoutTotal
+    call ShowCheckoutTotalDecimal
     call ClearCart
     
     lea dx, msgThankYou
@@ -468,15 +540,43 @@ PrintItemTotal:
     int 21h
     ret
 
-; FUNCTION TO SHOW CHECKOUT TOTAL
-ShowCheckoutTotal:
+; FUNCTION TO SHOW CHECKOUT TOTAL WITH TAX - COMPLETELY REWRITTEN
+ShowCheckoutTotalDecimal:
+    ; Show subtotal with decimals
     lea dx, msgTotalPrice
     call PrintString
     mov ax, [CartTotal]
-    call PrintNum
+    mov bx, 100          ; Convert to cents
+    mul bx               ; ax = CartTotal * 100 (in cents)
+    mov [TempSubtotal], ax  ; Store subtotal in cents
+    call PrintDecimalFixed
+    call NewLine
+    
+    ; Calculate tax (6% of CartTotal)
+    ; Tax = (CartTotal * 6) cents 
+    mov ax, [CartTotal]
+    mov bx, 6
+    mul bx              ; ax = CartTotal * 6 (this is 6% in cents)
+    mov [TempTax], ax   ; Store tax in cents
+    
+    ; Show tax amount
+    lea dx, msgTaxAmount
+    call PrintString
+    mov ax, [TempTax]
+    call PrintDecimalFixed
+    call NewLine
+    
+    ; Calculate final total: subtotal_cents + tax_cents
+    mov ax, [TempSubtotal]  ; Get subtotal in cents
+    add ax, [TempTax]       ; Add tax in cents
+    
+    ; Show final total
+    lea dx, msgFinalTotal
+    call PrintString
+    call PrintDecimalFixed
     call NewLine
     ret
-
+    
 ; FUNCTION TO SHOW CART SUMMARY - FIXED
 ShowCartSummary:
     mov cx, 5
@@ -751,6 +851,56 @@ PrintNum:
     mov ah, 02h
     int 21h
     loop .print_loop
+    pop ax
+    ret
+
+; FUNCTION TO PRINT DECIMAL NUMBER (2 decimal places) - FIXED VERSION
+PrintDecimalFixed:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    ; ax contains value in cents (e.g., 1272 for 12.72)
+    mov bx, 100
+    xor dx, dx
+    div bx              ; ax = dollars, dx = cents
+    
+    ; Print dollar part
+    push dx             ; Save cents
+    call PrintNum
+    
+    ; Print decimal point
+    mov dl, '.'
+    mov ah, 02h
+    int 21h
+    
+    ; Print cents (always 2 digits)
+    pop ax              ; Get cents back into ax
+    
+    ; Print tens digit of cents
+    mov bl, 10
+    mov ah, 0           ; Clear high byte properly
+    div bl              ; al = tens digit, ah = ones digit
+    
+    ; Print tens digit
+    push ax             ; Save both digits
+    add al, '0'         ; Convert tens digit to ASCII
+    mov dl, al
+    mov ah, 02h
+    int 21h
+    
+    ; Print ones digit
+    pop ax
+    mov al, ah          ; Get ones digit from ah
+    add al, '0'         ; Convert ones digit to ASCII
+    mov dl, al
+    mov ah, 02h
+    int 21h
+    
+    pop dx
+    pop cx
+    pop bx
     pop ax
     ret
 
