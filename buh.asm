@@ -1,3 +1,4 @@
+; APU Food Store System in TASM - Login + Menu + Food List Display (No Decimal)
 .model small
 .stack 100h
 
@@ -58,19 +59,11 @@
     msgTotalPrice db 13,10, "Subtotal: RM$"
     msgTaxAmount db 13,10, "Tax (6%): RM$"
     msgFinalTotal db 13,10, "Total Amount: RM$"
-    
-    ; Payment messages
-    msgPaymentTitle db 13,10, "=== Payment Processed ===", 13,10, "$"
     msgThankYou db 13,10, "Thank you for your order!", 13,10, "$"
-    msgTransactionComplete db "Transaction completed successfully!", 13,10, "$"
 
     ; Cart tracking arrays
     CartItems db 5 dup(0)      ; Track quantity of each item in cart
     CartTotal dw 0             ; Total amount
-    FinalTotal dw 0            ; Total with tax
-
-    TempSubtotal dw 0
-    TempTax dw 0
 
 .code
 main:
@@ -395,7 +388,7 @@ EmptyCartMsg:
     call PrintString
     ret
 
-; CHECKOUT FUNCTION - SIMPLIFIED WITHOUT USER INPUT
+; CHECKOUT FUNCTION (REPLACES CalculateTotal)
 CalculateTotal:
     lea dx, msgCheckoutTitle
     call PrintString
@@ -421,53 +414,15 @@ CheckEmptyCheckout:
     call NewLine
     call ShowAllCartItems
     call ShowCheckoutTotalDecimal
-    
-    ; Process payment automatically
-    call ProcessPayment
-    
-    ; Clear cart after payment
     call ClearCart
     
     lea dx, msgThankYou
-    call PrintString
-    lea dx, msgTransactionComplete
     call PrintString
     ret
 
 NoItemsCheckout:
     lea dx, msgNoOrders
     call PrintString
-    ret
-
-; SIMPLIFIED PAYMENT PROCESSING - NO USER INPUT
-ProcessPayment:
-    lea dx, msgPaymentTitle
-    call PrintString
-    
-    ; Calculate final total with tax and store it
-    call CalculateFinalTotal
-    ret
-
-; FUNCTION TO CALCULATE FINAL TOTAL WITH TAX
-CalculateFinalTotal:
-    ; Calculate total: CartTotal + (CartTotal * 6 / 100)
-    ; Method: (CartTotal * 106) / 100
-    mov ax, [CartTotal]
-    mov bx, 106
-    mul bx                  ; ax = CartTotal * 106
-    
-    ; Convert to whole dollars (round up if needed)
-    mov bx, 100
-    xor dx, dx
-    div bx                  ; ax = dollars, dx = cents
-    
-    ; If there are cents, round up to next dollar for simplicity
-    cmp dx, 0
-    je NoRounding
-    inc ax
-    
-NoRounding:
-    mov [FinalTotal], ax
     ret
 
 ; FUNCTION TO SHOW ALL CART ITEMS
@@ -582,157 +537,47 @@ PrintItemTotal:
     int 21h
     ret
 
-; FUNCTION TO SHOW CHECKOUT TOTAL WITH TAX
+; FUNCTION TO SHOW CHECKOUT TOTAL WITH TAX - SIMPLIFIED VERSION
 ShowCheckoutTotalDecimal:
-    ; Show subtotal (no conversion to cents yet)
+    ; DEBUG: Print actual CartTotal value
+    mov dl, '['
+    mov ah, 02h
+    int 21h
+    mov ax, [CartTotal]
+    call PrintNum
+    mov dl, ']'
+    mov ah, 02h
+    int 21h
+    call NewLine
+    
+    ; Show subtotal: CartTotal.00
     lea dx, msgTotalPrice
     call PrintString
-    mov ax, [CartTotal]
-    push ax                 ; Save original CartTotal
-    call PrintDecimalWholeNumber
+    mov ax, [CartTotal]     ; Get cart total (e.g., 31)
+    mov bx, 100
+    mul bx                  ; ax = 3100 (31.00 in cents)
+    call PrintDecimalFixed
     call NewLine
     
-    ; Calculate and show tax (6% of CartTotal)
+    ; Calculate and show tax: CartTotal * 6 (represents 6% in cents)
     lea dx, msgTaxAmount
     call PrintString
-    pop ax                  ; Restore CartTotal
-    push ax                 ; Save it again for final calculation
-    call CalculateAndPrintTax
+    mov ax, [CartTotal]     ; Get cart total again
+    mov bx, 6
+    mul bx                  ; ax = CartTotal * 6 (tax in cents)
+    call PrintDecimalFixed
     call NewLine
     
-    ; Calculate and show final total
+    ; Calculate and show final total: CartTotal * 106 (100% + 6% tax)
     lea dx, msgFinalTotal
     call PrintString
-    pop ax                  ; Restore CartTotal
-    call CalculateAndPrintTotal
+    mov ax, [CartTotal]     ; Get cart total again
+    mov bx, 106
+    mul bx                  ; ax = CartTotal * 106 (total with tax in cents)
+    call PrintDecimalFixed
     call NewLine
     ret
 
-; Function to print whole number with .00
-PrintDecimalWholeNumber:
-    call PrintNum
-    mov dl, '.'
-    mov ah, 02h
-    int 21h
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    ret
-
-; Function to calculate and print 6% tax
-CalculateAndPrintTax:
-    ; Calculate tax: (CartTotal * 6) / 100
-    ; We'll do this step by step to avoid overflow
-    
-    ; First, let's handle the multiplication carefully
-    mov bx, 6
-    mul bx                  ; ax = CartTotal * 6
-    
-    ; Now we have tax in cents, convert to dollars.cents
-    mov bx, 100
-    xor dx, dx
-    div bx                  ; ax = dollars, dx = cents
-    
-    ; Print dollars
-    call PrintNum
-    
-    ; Print decimal point
-    mov dl, '.'
-    mov ah, 02h
-    int 21h
-    
-    ; Print cents (dx contains cents remainder)
-    mov ax, dx
-    cmp ax, 10
-    jae print_two_digits
-    
-    ; If cents < 10, print leading zero
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    mov dl, al
-    add dl, '0'
-    mov ah, 02h
-    int 21h
-    ret
-    
-print_two_digits:
-    ; If cents >= 10, print both digits
-    mov bl, 10
-    div bl                  ; al = tens, ah = ones
-    
-    ; Print tens digit
-    add al, '0'
-    mov dl, al
-    mov ah, 02h
-    int 21h
-    
-    ; Print ones digit
-    mov al, ah
-    add al, '0'
-    mov dl, al
-    mov ah, 02h
-    int 21h
-    ret
-
-; Function to calculate and print total with tax
-CalculateAndPrintTotal:
-    ; Calculate total: CartTotal + (CartTotal * 6 / 100)
-    ; Method: (CartTotal * 106) / 100
-    
-    mov bx, 106
-    mul bx                  ; ax = CartTotal * 106
-    
-    ; Convert to dollars.cents
-    mov bx, 100
-    xor dx, dx
-    div bx                  ; ax = dollars, dx = cents
-    
-    ; Print dollars
-    call PrintNum
-    
-    ; Print decimal point
-    mov dl, '.'
-    mov ah, 02h
-    int 21h
-    
-    ; Print cents (dx contains cents remainder)
-    mov ax, dx
-    cmp ax, 10
-    jae print_total_two_digits
-    
-    ; If cents < 10, print leading zero
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    mov dl, al
-    add dl, '0'
-    mov ah, 02h
-    int 21h
-    ret
-    
-print_total_two_digits:
-    ; If cents >= 10, print both digits
-    mov bl, 10
-    div bl                  ; al = tens, ah = ones
-    
-    ; Print tens digit
-    add al, '0'
-    mov dl, al
-    mov ah, 02h
-    int 21h
-    
-    ; Print ones digit  
-    mov al, ah
-    add al, '0'
-    mov dl, al
-    mov ah, 02h
-    int 21h
-    ret
-    
 ; FUNCTION TO SHOW CART SUMMARY - FIXED
 ShowCartSummary:
     mov cx, 5
@@ -1007,6 +852,53 @@ PrintNum:
     mov ah, 02h
     int 21h
     loop .print_loop
+    pop ax
+    ret
+
+; FUNCTION TO PRINT DECIMAL NUMBER (2 decimal places)
+PrintDecimalFixed:
+    push ax
+    push cx
+    push dx
+    
+    ; ax contains value in cents (e.g., 1272 for 12.72)
+    mov bx, 100
+    xor dx, dx
+    div bx              ; ax = dollars, dx = cents
+    
+    ; Print dollar part
+    push dx             ; Save cents
+    call PrintNum
+    
+    ; Print decimal point
+    mov dl, '.'
+    mov ah, 02h
+    int 21h
+    
+    ; Print cents (always 2 digits)
+    pop ax              ; Get cents back
+    
+    ; Print tens digit of cents
+    mov bl, 10
+    xor ah, ah
+    div bl              ; al = tens, ah = ones
+    
+    push ax             ; Save both digits
+    add al, '0'
+    mov dl, al
+    mov ah, 02h
+    int 21h
+    
+    ; Print ones digit of cents
+    pop ax
+    mov al, ah          ; Get ones digit
+    add al, '0'
+    mov dl, al
+    mov ah, 02h
+    int 21h
+    
+    pop dx
+    pop cx
     pop ax
     ret
 
