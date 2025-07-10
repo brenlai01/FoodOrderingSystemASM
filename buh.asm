@@ -60,12 +60,7 @@
     msgFinalTotal db 13,10, "Total Amount: RM$"
     
     ; Payment messages
-    msgPaymentTitle db 13,10, "=== Payment ===", 13,10, "$"
-    msgAmountDue db "Amount Due: RM$"
-    msgEnterPayment db 13,10, "Enter amount received: RM$"
-    msgAmountReceived db "Amount Received: RM$"
-    msgChangeAmount db "Change: RM$"
-    msgInsufficientFunds db 13,10, "Insufficient payment! Please enter a higher amount.", 13,10, "$"
+    msgPaymentTitle db 13,10, "=== Payment Processed ===", 13,10, "$"
     msgThankYou db 13,10, "Thank you for your order!", 13,10, "$"
     msgTransactionComplete db "Transaction completed successfully!", 13,10, "$"
 
@@ -73,8 +68,6 @@
     CartItems db 5 dup(0)      ; Track quantity of each item in cart
     CartTotal dw 0             ; Total amount
     FinalTotal dw 0            ; Total with tax
-    PaymentAmount dw 0         ; Amount received from customer
-    ChangeAmount dw 0          ; Change to give back
 
     TempSubtotal dw 0
     TempTax dw 0
@@ -402,7 +395,7 @@ EmptyCartMsg:
     call PrintString
     ret
 
-; CHECKOUT FUNCTION WITH PAYMENT PROCESSING
+; CHECKOUT FUNCTION - SIMPLIFIED WITHOUT USER INPUT
 CalculateTotal:
     lea dx, msgCheckoutTitle
     call PrintString
@@ -429,10 +422,10 @@ CheckEmptyCheckout:
     call ShowAllCartItems
     call ShowCheckoutTotalDecimal
     
-    ; Process payment
+    ; Process payment automatically
     call ProcessPayment
     
-    ; Clear cart after successful payment
+    ; Clear cart after payment
     call ClearCart
     
     lea dx, msgThankYou
@@ -446,41 +439,14 @@ NoItemsCheckout:
     call PrintString
     ret
 
-; NEW PAYMENT PROCESSING FUNCTION
+; SIMPLIFIED PAYMENT PROCESSING - NO USER INPUT
 ProcessPayment:
     lea dx, msgPaymentTitle
     call PrintString
     
     ; Calculate final total with tax and store it
     call CalculateFinalTotal
-    
-PaymentLoop:
-    ; Show amount due
-    lea dx, msgAmountDue
-    call PrintString
-    mov ax, [FinalTotal]
-    call PrintDecimalWholeNumber
-    call NewLine
-    
-    ; Get payment amount
-    lea dx, msgEnterPayment
-    call PrintString
-    call GetPaymentAmount
-    
-    ; Check if payment is sufficient
-    mov ax, [PaymentAmount]
-    cmp ax, [FinalTotal]
-    jb InsufficientPayment
-    
-    ; Payment is sufficient, calculate change
-    call CalculateChange
-    call ShowPaymentSummary
     ret
-
-InsufficientPayment:
-    lea dx, msgInsufficientFunds
-    call PrintString
-    jmp PaymentLoop
 
 ; FUNCTION TO CALCULATE FINAL TOTAL WITH TAX
 CalculateFinalTotal:
@@ -502,94 +468,6 @@ CalculateFinalTotal:
     
 NoRounding:
     mov [FinalTotal], ax
-    ret
-
-; FUNCTION TO GET PAYMENT AMOUNT FROM USER
-GetPaymentAmount:
-    mov word ptr [PaymentAmount], 0
-    mov cx, 0                ; digit counter
-    
-GetPaymentLoop:
-    mov ah, 01h
-    int 21h
-    cmp al, 13               ; Enter key
-    je PaymentInputDone
-    
-    ; Validate digit
-    cmp al, '0'
-    jb InvalidPaymentDigit
-    cmp al, '9'
-    ja InvalidPaymentDigit
-    
-    ; Convert and accumulate
-    sub al, '0'
-    mov bl, al
-    mov ax, [PaymentAmount]
-    mov dx, 10
-    mul dx
-    add ax, bx
-    mov [PaymentAmount], ax
-    
-    inc cx
-    cmp cx, 4                ; Limit to 4 digits (max 9999)
-    jl GetPaymentLoop
-    
-    ; Wait for Enter
-WaitForEnter:
-    mov ah, 01h
-    int 21h
-    cmp al, 13
-    jne WaitForEnter
-    
-PaymentInputDone:
-    call NewLine
-    ret
-
-InvalidPaymentDigit:
-    jmp GetPaymentLoop
-
-; FUNCTION TO CALCULATE CHANGE
-CalculateChange:
-    mov ax, [PaymentAmount]
-    sub ax, [FinalTotal]
-    mov [ChangeAmount], ax
-    ret
-
-; FUNCTION TO SHOW PAYMENT SUMMARY
-ShowPaymentSummary:
-    call NewLine
-    
-    ; Show amount received
-    lea dx, msgAmountReceived
-    call PrintString
-    mov ax, [PaymentAmount]
-    call PrintNum
-    mov dl, '.'
-    mov ah, 02h
-    int 21h
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    call NewLine
-    
-    ; Show change
-    lea dx, msgChangeAmount
-    call PrintString
-    mov ax, [ChangeAmount]
-    call PrintNum
-    mov dl, '.'
-    mov ah, 02h
-    int 21h
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    mov dl, '0'
-    mov ah, 02h
-    int 21h
-    call NewLine
     ret
 
 ; FUNCTION TO SHOW ALL CART ITEMS
