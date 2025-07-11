@@ -75,6 +75,12 @@
     PaymentAmount dw 0         ; Amount paid by customer
     ChangeAmount dw 0          ; Change to give back
     FinalTotalWithTax dw 0     ; Final total including tax
+    
+    ; Add these new messages for restock quantity input
+    msgRestockQty db 13,10, "Enter quantity to restock (1-99): $"
+    msgRestockQtySuccess db 13,10, "Successfully added $"
+    msgRestockQtyUnits db " units to inventory!", 13,10, "$"
+    msgRestockQtyInvalid db 13,10, "Invalid quantity! Please enter 1-99.", 13,10, "$"
 
 .code
 main:
@@ -271,19 +277,158 @@ RestockInvalid:
     lea dx, msgRestockInvalidID
     call PrintString
     ret
-
-; FUNCTION TO ADD RESTOCK ITEM
+    
+; FUNCTION TO ADD RESTOCK ITEM WITH USER INPUT
+; FUNCTION TO ADD RESTOCK ITEM WITH USER INPUT - FIXED
 AddRestockItem:
-    ; Add 10 units to inventory
+    ; Get and save current quantity
     mov bx, si
     shl bx, 1
     mov ax, [FoodQty + bx]
-    add ax, 10           ; Add 10 units
-    mov [FoodQty + bx], ax
+    push si                 ; Save si (food item index)
+    push ax                 ; Save current stock quantity
     
-    ; Show success message
-    lea dx, msgRestockSuccess
+    ; Display current stock
+    mov dl, 'C'
+    mov ah, 02h
+    int 21h
+    mov dl, 'u'
+    mov ah, 02h
+    int 21h
+    mov dl, 'r'
+    mov ah, 02h
+    int 21h
+    mov dl, 'r'
+    mov ah, 02h
+    int 21h
+    mov dl, 'e'
+    mov ah, 02h
+    int 21h
+    mov dl, 'n'
+    mov ah, 02h
+    int 21h
+    mov dl, 't'
+    mov ah, 02h
+    int 21h
+    mov dl, ' '
+    mov ah, 02h
+    int 21h
+    mov dl, 's'
+    mov ah, 02h
+    int 21h
+    mov dl, 't'
+    mov ah, 02h
+    int 21h
+    mov dl, 'o'
+    mov ah, 02h
+    int 21h
+    mov dl, 'c'
+    mov ah, 02h
+    int 21h
+    mov dl, 'k'
+    mov ah, 02h
+    int 21h
+    mov dl, ':'
+    mov ah, 02h
+    int 21h
+    mov dl, ' '
+    mov ah, 02h
+    int 21h
+    
+    pop ax                  ; Get saved current stock quantity
+    call PrintNum           ; Print current stock quantity
+    call NewLine
+    
+    ; Get quantity to add
+    lea dx, msgRestockQty
     call PrintString
+    
+    call GetRestockQuantity
+    cmp ax, 0
+    je RestockQtyInvalid
+    
+    ; Save the quantity to add for later display
+    push ax                 ; Save quantity to add
+    mov dx, ax              ; Save quantity to add in dx
+    pop cx                  ; Get quantity to add in cx
+    pop si                  ; Restore si (food item index)
+    
+    ; Add the quantity to existing stock
+    mov bx, si
+    shl bx, 1
+    mov ax, [FoodQty + bx]  ; Get current stock
+    add ax, cx              ; Add new quantity
+    mov [FoodQty + bx], ax  ; Store new total
+    
+    ; Show success message with the quantity that was added
+    lea dx, msgRestockQtySuccess
+    call PrintString
+    mov ax, cx              ; Print the quantity that was added
+    call PrintNum
+    lea dx, msgRestockQtyUnits
+    call PrintString
+    ret
+
+RestockQtyInvalid:
+    pop si                  ; Restore si
+    lea dx, msgRestockQtyInvalid
+    call PrintString
+    ret
+
+
+; FUNCTION TO GET RESTOCK QUANTITY INPUT
+GetRestockQuantity:
+    push bx
+    push cx
+    push dx
+    push si
+    
+    mov ax, 0               ; Initialize result
+    mov bx, 10              ; Base 10
+    mov si, ax              ; Use si to track result
+    
+GetRestockQtyLoop:
+    mov ah, 01h             ; Get character
+    int 21h
+    
+    cmp al, 13              ; Enter key?
+    je GetRestockQtyDone
+    
+    cmp al, '0'             ; Check if digit
+    jb GetRestockQtyInvalid
+    cmp al, '9'
+    ja GetRestockQtyInvalid
+    
+    ; Convert and accumulate
+    sub al, '0'             ; Convert to number
+    mov cl, al              ; Save digit
+    mov ax, si              ; Get current result
+    mul bx                  ; Multiply by 10
+    jc GetRestockQtyInvalid ; Check for overflow
+    add ax, cx              ; Add new digit
+    jc GetRestockQtyInvalid ; Check for overflow
+    cmp ax, 99              ; Check if result > 99
+    ja GetRestockQtyInvalid
+    mov si, ax              ; Store back to si
+    
+    jmp GetRestockQtyLoop
+
+GetRestockQtyDone:
+    mov ax, si              ; Return result in ax
+    cmp ax, 0               ; Make sure it's not 0
+    je GetRestockQtyInvalid
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+GetRestockQtyInvalid:
+    mov ax, 0               ; Return 0 for invalid input
+    pop si
+    pop dx
+    pop cx
+    pop bx
     ret
 
 DoLogout:
