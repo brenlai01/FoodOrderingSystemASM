@@ -1,4 +1,4 @@
-; APU Food Store System in TASM - Login + Menu + Food List Display (No Decimal)
+; APU Food Store System in TASM - Login + Menu + Food List Display + Payment Processing
 .model small
 .stack 100h
 
@@ -61,9 +61,20 @@
     msgFinalTotal db 13,10, "Total Amount: RM$"
     msgThankYou db 13,10, "Thank you for your order!", 13,10, "$"
 
+    ; Payment messages
+    msgPaymentPrompt db 13,10, "Enter amount paid in cents (e.g., 3300 for RM33.00): $"
+    msgAmountPaid db 13,10, "Amount Paid: RM$"
+    msgChangeAmount db 13,10, "Change: RM$"
+    msgInsufficientFunds db 13,10, "Insufficient payment! Please pay at least RM$"
+    msgExactPayment db 13,10, "Exact payment received. No change required.", 13,10, "$"
+    msgPaymentError db 13,10, "Invalid payment amount. Please try again.", 13,10, "$"
+
     ; Cart tracking arrays
     CartItems db 5 dup(0)      ; Track quantity of each item in cart
     CartTotal dw 0             ; Total amount
+    PaymentAmount dw 0         ; Amount paid by customer
+    ChangeAmount dw 0          ; Change to give back
+    FinalTotalWithTax dw 0     ; Final total including tax
 
 .code
 main:
@@ -388,7 +399,7 @@ EmptyCartMsg:
     call PrintString
     ret
 
-; CHECKOUT FUNCTION (REPLACES CalculateTotal)
+; ENHANCED CHECKOUT FUNCTION WITH PAYMENT PROCESSING
 CalculateTotal:
     lea dx, msgCheckoutTitle
     call PrintString
@@ -414,6 +425,11 @@ CheckEmptyCheckout:
     call NewLine
     call ShowAllCartItems
     call ShowCheckoutTotalDecimal
+    
+    ; Process payment
+    call ProcessPayment
+    
+    ; Clear cart after successful payment
     call ClearCart
     
     lea dx, msgThankYou
@@ -423,6 +439,129 @@ CheckEmptyCheckout:
 NoItemsCheckout:
     lea dx, msgNoOrders
     call PrintString
+    ret
+
+; NEW FUNCTION TO PROCESS PAYMENT
+ProcessPayment:
+    ; Calculate final total with tax (in cents)
+    mov ax, [CartTotal]     ; Get cart total
+    mov bx, 106             ; 100% + 6% tax
+    mul bx                  ; ax = total with tax in cents
+    mov [FinalTotalWithTax], ax
+    
+PaymentLoop:
+    ; Prompt for payment
+    lea dx, msgPaymentPrompt
+    call PrintString
+    
+    ; Get payment amount
+    call GetPaymentInput
+    cmp ax, 0
+    je PaymentError         ; Invalid input
+    
+    mov [PaymentAmount], ax
+    
+    ; Check if payment is sufficient
+    mov ax, [PaymentAmount]
+    cmp ax, [FinalTotalWithTax]
+    jb InsufficientPayment
+    
+    ; Payment is sufficient, show payment details
+    call ShowPaymentDetails
+    ret
+
+PaymentError:
+    lea dx, msgPaymentError
+    call PrintString
+    jmp PaymentLoop
+
+InsufficientPayment:
+    lea dx, msgInsufficientFunds
+    call PrintString
+    mov ax, [FinalTotalWithTax]
+    call PrintDecimalFixed
+    call NewLine
+    jmp PaymentLoop
+
+; FUNCTION TO SHOW PAYMENT DETAILS
+ShowPaymentDetails:
+    ; Show amount paid
+    lea dx, msgAmountPaid
+    call PrintString
+    mov ax, [PaymentAmount]
+    call PrintDecimalFixed
+    call NewLine
+    
+    ; Calculate and show change
+    mov ax, [PaymentAmount]
+    sub ax, [FinalTotalWithTax]
+    mov [ChangeAmount], ax
+    
+    cmp ax, 0
+    je ExactPayment
+    
+    ; Show change
+    lea dx, msgChangeAmount
+    call PrintString
+    mov ax, [ChangeAmount]
+    call PrintDecimalFixed
+    call NewLine
+    ret
+
+ExactPayment:
+    lea dx, msgExactPayment
+    call PrintString
+    ret
+
+; FUNCTION TO GET PAYMENT INPUT (IN CENTS)
+GetPaymentInput:
+    push bx
+    push cx
+    push dx
+    push si
+    
+    mov ax, 0               ; Initialize result
+    mov bx, 10              ; Base 10
+    mov si, ax              ; Use si to track result
+    
+GetPaymentLoop:
+    mov ah, 01h             ; Get character
+    int 21h
+    
+    cmp al, 13              ; Enter key?
+    je GetPaymentDone
+    
+    cmp al, '0'             ; Check if digit
+    jb GetPaymentInvalid
+    cmp al, '9'
+    ja GetPaymentInvalid
+    
+    ; Convert and accumulate
+    sub al, '0'             ; Convert to number
+    mov cl, al              ; Save digit
+    mov ax, si              ; Get current result
+    mul bx                  ; Multiply by 10
+    jo GetPaymentInvalid    ; Overflow check
+    add ax, cx              ; Add new digit (cx contains the digit)
+    jc GetPaymentInvalid    ; Carry check
+    mov si, ax              ; Store back to si
+    
+    jmp GetPaymentLoop
+
+GetPaymentDone:
+    mov ax, si              ; Return result in ax
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+GetPaymentInvalid:
+    mov ax, 0               ; Return 0 for invalid input
+    pop si
+    pop dx
+    pop cx
+    pop bx
     ret
 
 ; FUNCTION TO SHOW ALL CART ITEMS
@@ -539,17 +678,6 @@ PrintItemTotal:
 
 ; FUNCTION TO SHOW CHECKOUT TOTAL WITH TAX - SIMPLIFIED VERSION
 ShowCheckoutTotalDecimal:
-    ; DEBUG: Print actual CartTotal value
-    mov dl, '['
-    mov ah, 02h
-    int 21h
-    mov ax, [CartTotal]
-    call PrintNum
-    mov dl, ']'
-    mov ah, 02h
-    int 21h
-    call NewLine
-    
     ; Show subtotal: CartTotal.00
     lea dx, msgTotalPrice
     call PrintString
@@ -820,6 +948,7 @@ NewLine:
     mov dl, 10
     int 21h
     ret
+
 PrintText:
     push dx
     push si     ; Save si register
