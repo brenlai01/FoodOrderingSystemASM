@@ -202,13 +202,33 @@ NextItem:
     call PrintTab
 
     ; === Print Quantity ===
+    ; Replace the quantity printing section in NextItem loop with this:
+    ; === Print Quantity with Color ===
     mov bx, si
     shl bx, 1
     mov ax, [FoodQty + bx]
+
+    ; Check if quantity is less than 5
+    cmp ax, 5
+    jae NormalColor      ; Jump if quantity >= 5
+
+    ; Set red color for low stock
+    push ax
+    mov al, 0Ch         ; Bright red color (12 in hex)
+    call SetTextColor
+    pop ax
+
+    call PrintNum       ; Print the quantity number
+    call ResetTextColor ; Reset to normal color
+    jmp QuantityPrinted
+
+    NormalColor:
+    call PrintNum       ; Print quantity in normal color
+
+    QuantityPrinted:
     push si
-    call PrintNum
-    pop si
     call PrintTab
+    pop si
 
     ; === Print Price ===
     mov bx, si
@@ -374,7 +394,6 @@ RestockQtyInvalid:
     lea dx, msgRestockQtyInvalid
     call PrintString
     ret
-
 
 ; FUNCTION TO GET RESTOCK QUANTITY INPUT
 GetRestockQuantity:
@@ -556,6 +575,7 @@ ProcessCheckout:
     mov cx, 5
     mov si, 0
     mov al, 0
+    
 CheckEmptyCheckout:
     add al, [CartItems + si]
     inc si
@@ -1001,10 +1021,28 @@ DisplayNext:
     mov bx, si
     shl bx, 1
     mov ax, [FoodQty + bx]
+
+    ; Check if quantity is less than 5
+    cmp ax, 5
+    jae NormalColorOrder      ; Jump if quantity >= 5
+
+    ; Set red color for low stock
+    push ax
+    mov al, 0Ch         ; Bright red color
+    call SetTextColor
+    pop ax
+
+    call PrintNum       ; Print the quantity number
+    call ResetTextColor ; Reset to normal color
+    jmp QuantityPrintedOrder
+
+    NormalColorOrder:
+    call PrintNum       ; Print quantity in normal color
+
+    QuantityPrintedOrder:
     push si
-    call PrintNum
-    pop si
     call PrintTab
+    pop si
     
     ; Print Price
     mov bx, si
@@ -1021,6 +1059,27 @@ DisplayEnd:
     call NewLine
     ret
     
+; Add this new function to set text color
+SetTextColor:
+    push ax
+    push bx
+    mov ah, 09h         ; BIOS function to set color
+    mov bh, 0           ; Page number
+    mov bl, al          ; Color attribute (passed in AL)
+    mov cx, 1           ; Number of characters (not used for color setting)
+    int 10h
+    pop bx
+    pop ax
+    ret
+
+; Add this function to reset to normal color
+ResetTextColor:
+    push ax
+    mov al, 07h         ; Normal white text on black background
+    call SetTextColor
+    pop ax
+    ret    
+
 ; ========== Utility Functions ==========
 
 GetInput:
