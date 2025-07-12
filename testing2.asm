@@ -104,6 +104,25 @@
     msgRestockQtyUnits db " units to inventory!", 13,10, "$"
     msgRestockQtyInvalid db 13,10, "Invalid quantity! Please enter 1-99.", 13,10, "$"
     
+    ; Sales recording variables
+    salesFile db "sales.txt", 0
+    salesHandle dw 0
+    salesBuffer db 200 dup(0)
+    tempBuffer db 50 dup(0)
+    
+    ; Date and time variables
+    currentDate db 11 dup(0)      ; Format: DD/MM/YYYY
+    currentTime db 9 dup(0)       ; Format: HH:MM:SS
+    
+    ; Sales record messages
+    msgSalesRecord db "Sales Record: $"
+    msgDateTime db " - Date: $"
+    msgTimeStamp db " Time: $"
+    msgSalesAmount db " Amount: RM$"
+    msgSalesItems db " Items: $"
+    msgSalesNewline db 13, 10, "$"
+    msgSalesError db 13,10,"Error: Cannot write to sales.txt file.$"
+    msgSalesSuccess db 13,10,"Sales record saved successfully!$"
 
 .code
 main:
@@ -112,6 +131,8 @@ main:
     
     lea dx, msgWelcome
     call PrintString
+    
+
       
 StartLogin:
 
@@ -145,7 +166,6 @@ StartLogin:
     jmp StartLogin
 
 LoginSuccess:
-    call ClearScreen
     lea dx, msgSuccess
     call PrintString
     call MainMenu
@@ -824,6 +844,10 @@ PaymentLoop:
     
     ; Payment is sufficient, show payment details
     call ShowPaymentDetails
+    
+    ; Record the sale to file
+    call RecordSale
+    
     ret
 
 PaymentError:
@@ -1387,6 +1411,400 @@ PrintNumRed:
     
     loop .print_loop_red
     
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+    
+; Writing to text file testing
+; Function to record sale to file
+RecordSale:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    
+    ; Get current date and time
+    call GetDateTime
+    
+    ; Open sales file for append
+    mov ah, 3Dh         ; Open file
+    mov al, 1           ; Write mode
+    lea dx, salesFile
+    int 21h
+    jc SalesFileError   ; If can't open, show error
+    
+    mov [salesHandle], ax
+    
+    ; Move to end of file for append
+    mov ah, 42h         ; Seek
+    mov al, 2           ; From end of file
+    mov bx, [salesHandle]
+    mov cx, 0
+    mov dx, 0
+    int 21h
+
+WriteSalesRecord:
+    ; Build sales record string
+    lea di, salesBuffer
+    call ClearSalesBuffer
+    
+    ; Add "Sales Record: "
+    lea si, msgSalesRecord
+    call AppendString
+    
+    ; Add date
+    lea si, msgDateTime
+    call AppendString
+    lea si, currentDate
+    call AppendString
+    
+    ; Add time
+    lea si, msgTimeStamp
+    call AppendString
+    lea si, currentTime
+    call AppendString
+    
+    ; Add amount
+    lea si, msgSalesAmount
+    call AppendString
+    call AppendAmount
+    
+    ; Add items count
+    lea si, msgSalesItems
+    call AppendString
+    call AppendItemCount
+    
+    ; Add newline
+    lea si, msgSalesNewline
+    call AppendString
+    
+    ; Write to file
+    mov ah, 40h         ; Write to file
+    mov bx, [salesHandle]
+    mov cx, di
+    lea dx, salesBuffer
+    sub cx, dx          ; Calculate length
+    int 21h
+    jc SalesFileError
+    
+    ; Close file
+    mov ah, 3Eh
+    mov bx, [salesHandle]
+    int 21h
+    
+    ; Show success message
+    lea dx, msgSalesSuccess
+    call PrintString
+    
+    jmp SalesRecordDone
+
+SalesFileError:
+    lea dx, msgSalesError
+    call PrintString
+
+SalesRecordDone:
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to get current date and time
+GetDateTime:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    ; Get system date
+    mov ah, 2Ah         ; Get system date
+    int 21h
+    ; DH = month, DL = day, CX = year
+    
+    ; Format date as DD/MM/YYYY
+    lea di, currentDate
+    
+    ; Convert day to string
+    mov al, dl
+    call ConvertByteToString
+    mov byte ptr [di], '/'
+    inc di
+    
+    ; Convert month to string
+    mov al, dh
+    call ConvertByteToString
+    mov byte ptr [di], '/'
+    inc di
+    
+    ; Convert year to string
+    mov ax, cx
+    call ConvertWordToString
+    mov byte ptr [di], 0    ; Null terminate
+    
+    ; Get system time
+    mov ah, 2Ch         ; Get system time
+    int 21h
+    ; CH = hour, CL = minute, DH = second
+    
+    ; Format time as HH:MM:SS
+    lea di, currentTime
+    
+    ; Convert hour to string
+    mov al, ch
+    call ConvertByteToString
+    mov byte ptr [di], ':'
+    inc di
+    
+    ; Convert minute to string
+    mov al, cl
+    call ConvertByteToString
+    mov byte ptr [di], ':'
+    inc di
+    
+    ; Convert second to string
+    mov al, dh
+    call ConvertByteToString
+    mov byte ptr [di], 0    ; Null terminate
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert byte to 2-digit string
+ConvertByteToString:
+    push ax
+    push dx
+    
+    mov ah, 0
+    mov dl, 10
+    div dl              ; AL = tens, AH = ones
+    
+    add al, '0'
+    stosb               ; Store and increment DI
+    
+    add ah, '0'
+    stosb               ; Store and increment DI
+    
+    pop dx
+    pop ax
+    ret
+
+; Function to convert word to 4-digit string
+ConvertWordToString:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov bx, 1000
+    xor dx, dx
+    div bx
+    add al, '0'
+    stosb
+    
+    mov ax, dx
+    mov bx, 100
+    xor dx, dx
+    div bx
+    add al, '0'
+    stosb
+    
+    mov ax, dx
+    mov bx, 10
+    xor dx, dx
+    div bx
+    add al, '0'
+    stosb
+    
+    add dl, '0'
+    mov al, dl
+    stosb
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to clear sales buffer
+ClearSalesBuffer:
+    push ax
+    push cx
+    push di
+    
+    lea di, salesBuffer
+    mov cx, 200
+    mov al, 0
+    rep stosb
+    
+    lea di, salesBuffer
+    
+    pop di
+    pop cx
+    pop ax
+    ret
+
+; Function to append string to sales buffer
+AppendString:
+    push ax
+    push si
+    
+AppendLoop:
+    lodsb
+    cmp al, '$'
+    je AppendDone
+    cmp al, 0
+    je AppendDone
+    stosb
+    jmp AppendLoop
+    
+AppendDone:
+    pop si
+    pop ax
+    ret
+
+; Function to append amount to sales buffer
+AppendAmount:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov ax, [FinalTotalWithTax]
+    call ConvertAmountToString
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to append item count to sales buffer
+AppendItemCount:
+    push ax
+    push bx
+    push cx
+    push si
+    
+    ; Count total items in cart
+    mov cx, 5
+    mov si, 0
+    mov bl, 0
+CountItemsForRecord:
+    add bl, [CartItems + si]
+    inc si
+    loop CountItemsForRecord
+    
+    ; Convert count to string
+    mov al, bl
+    mov ah, 0
+    
+    ; Convert to decimal string manually
+    cmp al, 10
+    jb SingleDigitItem
+    
+    ; Two digits
+    mov ah, 0
+    mov bl, 10
+    div bl              ; AL = tens, AH = ones
+    add al, '0'
+    stosb
+    add ah, '0'
+    mov al, ah
+    stosb
+    jmp ItemCountDone
+    
+SingleDigitItem:
+    add al, '0'
+    stosb
+    
+ItemCountDone:
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert amount (in cents) to string format
+ConvertAmountToString:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    ; ax contains amount in cents
+    mov bx, 100
+    xor dx, dx
+    div bx              ; ax = dollars, dx = cents
+    
+    ; Convert dollars
+    push dx             ; Save cents
+    call ConvertWordToDecimalString
+    
+    ; Add decimal point
+    mov al, '.'
+    stosb
+    
+    ; Convert cents (always 2 digits)
+    pop ax              ; Get cents back
+    call ConvertByteToString
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert word to decimal string (variable length)
+ConvertWordToDecimalString:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    ; Handle special case of 0
+    cmp ax, 0
+    jne NonZeroAmount
+    mov al, '0'
+    stosb
+    jmp ConvertWordDone
+    
+NonZeroAmount:
+    mov cx, 0           ; Digit counter
+    push di             ; Save current position
+    
+    ; Convert number to digits (in reverse order on stack)
+ConvertDigitLoop:
+    mov bx, 10
+    xor dx, dx
+    div bx
+    push dx             ; Save digit
+    inc cx
+    test ax, ax
+    jnz ConvertDigitLoop
+    
+    pop di              ; Restore position
+    
+    ; Now pop digits and store them
+StoreDigitLoop:
+    pop dx
+    add dl, '0'
+    stosb
+    loop StoreDigitLoop
+    
+ConvertWordDone:
+    pop si
     pop dx
     pop cx
     pop bx

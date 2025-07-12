@@ -41,7 +41,7 @@
     msgMenu2 db "2. Order Food", 13,10, "$"
     msgMenu3 db "3. Calculate Total (with Tax)", 13,10, "$"
     msgMenu4 db "4. Restock", 13,10, "$"
-    msgMenu5 db "4. Generate Revenue Report", 13,10, "$
+    msgMenu5 db "4. Generate Revenue Report", 13,10, "$"
     msgMenu6 db "6. Logout", 13,10, "$"
     msgPrompt db "Enter your choice: $"
     msgInvalid db 13,10, "Invalid choice. Try again.", 13,10, "$"
@@ -352,7 +352,7 @@ CheckOption4:
     jmp Restock
 
 CheckOption5:
-    cmp bl, '5'
+    cmp bl, '6'
     jne InvalidChoice
     jmp DoLogout
 
@@ -492,8 +492,7 @@ RestockInvalid:
     call PrintString
     ret
     
-; FUNCTION TO ADD RESTOCK ITEM WITH USER INPUT
-; FUNCTION TO ADD RESTOCK ITEM WITH USER INPUT - FIXED
+; FUNCTION TO ADD RESTOCK ITEM WITH USER INPUT 
 AddRestockItem:
     ; Get and save current quantity
     mov bx, si
