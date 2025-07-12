@@ -3,24 +3,46 @@
 .stack 100h
 
 .data
-    correctUser db "admin",0
-    correctPass db "1234",0
-    inputUser db 10 dup(0)
-    inputPass db 10 dup(0)
-
-    ; Menu messages
-    msgWelcome db "=== Login System ===$"
+    ; File handling
+    filename db "users.txt", 0
+    filehandle dw 0
+    buffer db 100 dup(0)
+    
+    ; User input
+    inputUser db 20 dup(0)
+    inputPass db 20 dup(0)
+    
+    ; File reading variables
+    fileUser db 20 dup(0)
+    filePass db 20 dup(0)
+    
+    ; Login attempt counter
+    attemptCount db 0
+    
+    ; Messages
+    msgWelcome db "=== APU Food Store System ===$"
     msgUser db 13,10,"Username: $"
     msgPass db 13,10,"Password: $"
-    msgSuccess db 13,10,"Login Successful!$"
-    msgFail db 13,10,"Login Failed. Try again.$"
+    msgSuccess db 13,10,"Login Successful! Welcome Back!$"
+    msgFail db 13,10,"Invalid credentials. Login Failed. Try again.$"
+    msgFileError db 13,10,"Error: Cannot open users.txt file.$"
+    msgLockout db 13,10,"Locking Account.$"
+    msgPress db 13,10,"Press any key to try again...$"
+    
+    ; Sample menu after login
+    msgMenu db 13,10,13,10,"=== Main Menu ===",13,10
+           db "1. View Profile",13,10
+           db "2. Settings",13,10
+           db "3. Logout",13,10
+           db "Enter choice: $"
 
     msgMenuTitle db 13,10, "=== APU Food Store System ===", 13,10, "$"
     msgMenu1 db "1. View Menu", 13,10, "$"
     msgMenu2 db "2. Order Food", 13,10, "$"
     msgMenu3 db "3. Calculate Total (with Tax)", 13,10, "$"
     msgMenu4 db "4. Restock", 13,10, "$"
-    msgMenu5 db "5. Logout", 13,10, "$"
+    msgMenu5 db "4. Generate Revenue Report", 13,10, "$
+    msgMenu6 db "6. Logout", 13,10, "$"
     msgPrompt db "Enter your choice: $"
     msgInvalid db 13,10, "Invalid choice. Try again.", 13,10, "$"
     msgLogout db 13,10, "Logging out to login screen...", 13,10, "$"
@@ -81,47 +103,211 @@
     msgRestockQtySuccess db 13,10, "Successfully added $"
     msgRestockQtyUnits db " units to inventory!", 13,10, "$"
     msgRestockQtyInvalid db 13,10, "Invalid quantity! Please enter 1-99.", 13,10, "$"
+    
 
 .code
 main:
     mov ax, @data
     mov ds, ax
-
-StartLogin:
+    
     lea dx, msgWelcome
     call PrintString
+      
+StartLogin:
 
+    ; Get username
     lea dx, msgUser
     call PrintString
     lea bx, inputUser
     call GetInput
 
+    ; Get password (masked)
     lea dx, msgPass
     call PrintString
     lea bx, inputPass
     call GetMaskedInput
 
-    lea si, inputUser
-    lea di, correctUser
-    call StrCompare
+    ; Validate credentials from file
+    call ValidateLogin
     cmp al, 1
-    jne LoginFail
+    je LoginSuccess
+    
+    ; Login failed - increment attempt counter
+    inc byte ptr [attemptCount]
+    lea dx, msgFail
+    call PrintString
+    
+    ; Check if maximum attempts reached
+    cmp byte ptr [attemptCount], 3
+    je AccountLocked
+    
+    ; Continue to next attempt
+    jmp StartLogin
 
-    lea si, inputPass
-    lea di, correctPass
-    call StrCompare
-    cmp al, 1
-    jne LoginFail
-
+LoginSuccess:
     lea dx, msgSuccess
     call PrintString
     call MainMenu
     jmp StartLogin
 
-LoginFail:
-    lea dx, msgFail
+AccountLocked:
+    lea dx, msgLockout
     call PrintString
-    jmp StartLogin
+    ; Exit program
+    mov ah, 4Ch
+    int 21h
+
+; Function to validate login credentials from file
+ValidateLogin:
+    ; Open file for reading
+    mov ah, 3Dh         ; Open file
+    mov al, 0           ; Read-only mode
+    lea dx, filename
+    int 21h
+    jc FileOpenError
+    
+    mov [filehandle], ax
+    
+    ; Read file content
+    mov ah, 3Fh         ; Read from file
+    mov bx, [filehandle]
+    mov cx, 100         ; Read up to 100 bytes
+    lea dx, buffer
+    int 21h
+    jc FileReadError
+    
+    ; Close file
+    mov ah, 3Eh
+    mov bx, [filehandle]
+    int 21h
+    
+    ; Parse file content and check credentials
+    call ParseAndCheck
+    ret
+
+FileOpenError:
+FileReadError:
+    lea dx, msgFileError
+    call PrintString
+    mov al, 0           ; Return failure
+    ret
+
+; Function to parse file content and check credentials
+ParseAndCheck:
+    lea si, buffer      ; Source: file buffer
+    
+ParseLoop:
+    ; Skip to next line if current character is newline
+    cmp byte ptr [si], 0
+    je ParseFailed
+    cmp byte ptr [si], 10
+    je NextLine
+    cmp byte ptr [si], 13
+    je NextLine
+    
+    ; Parse username from current line
+    lea di, fileUser
+    call ParseToken
+    
+    ; Parse password from current line
+    lea di, filePass
+    call ParseToken
+    
+    ; Compare credentials
+    lea si, inputUser
+    lea di, fileUser
+    call StrCompare
+    cmp al, 1
+    jne NextCredential
+    
+    lea si, inputPass
+    lea di, filePass
+    call StrCompare
+    cmp al, 1
+    je ParseSuccess
+    
+NextCredential:
+    ; Move to next line
+    call SkipToNextLine
+    jmp ParseLoop
+
+NextLine:
+    inc si
+    jmp ParseLoop
+    
+ParseSuccess:
+    mov al, 1
+    ret
+    
+ParseFailed:
+    mov al, 0
+    ret
+
+; Function to parse a token (username or password) from file
+ParseToken:
+    push di
+    mov cx, 0
+ParseTokenLoop:
+    mov al, [si]
+    cmp al, ' '         ; Space separator
+    je ParseTokenDone
+    cmp al, 9           ; Tab separator
+    je ParseTokenDone
+    cmp al, 13          ; Carriage return
+    je ParseTokenDone
+    cmp al, 10          ; Line feed
+    je ParseTokenDone
+    cmp al, 0           ; End of buffer
+    je ParseTokenDone
+    
+    mov [di], al
+    inc si
+    inc di
+    inc cx
+    cmp cx, 19          ; Limit token length
+    jb ParseTokenLoop
+    
+ParseTokenDone:
+    mov byte ptr [di], 0    ; Null terminate
+    ; Skip whitespace
+    cmp byte ptr [si], ' '
+    je SkipSpace
+    cmp byte ptr [si], 9
+    je SkipSpace
+    jmp ParseTokenExit
+    
+SkipSpace:
+    inc si
+    
+ParseTokenExit:
+    pop di
+    ret
+
+; Function to skip to next line
+SkipToNextLine:
+SkipLoop:
+    mov al, [si]
+    cmp al, 0
+    je SkipDone
+    cmp al, 10
+    je SkipDone
+    inc si
+    jmp SkipLoop
+SkipDone:
+    cmp byte ptr [si], 10
+    jne SkipExit
+    inc si
+SkipExit:
+    ret  
+
+DoLogout:
+    lea dx, msgLogout
+    call PrintString
+    call WaitKey
+    call ClearScreen
+    lea dx, msgWelcome
+    call PrintString
+    ret  
 
 MainMenu:
 MenuLoop:
@@ -135,7 +321,7 @@ MenuLoop:
     call PrintString
     lea dx, msgMenu4
     call PrintString
-    lea dx, msgMenu5
+    lea dx, msgMenu6
     call PrintString
     lea dx, msgPrompt
     call PrintString
@@ -458,11 +644,6 @@ GetRestockQtyInvalid:
     pop bx
     ret
 
-DoLogout:
-    lea dx, msgLogout
-    call PrintString
-    ret
-
 ; Order Function
 OrderFood:
     lea dx, msgOrderTitle
@@ -557,6 +738,7 @@ CheckEmptyCart:
     mov cx, 5
     mov si, 0
     mov al, 0
+    
 CheckCartLoop:
     add al, [CartItems + si]
     inc si
@@ -1213,38 +1395,90 @@ PrintNumRed:
 ; ========== Utility Functions ==========
 
 GetInput:
-    mov cx, 0
-GetInput_Loop:
-    mov ah, 1
+    push bx             ; Save original buffer pointer
+    mov si, bx          ; Use SI to track current position
+    mov cx, 0           ; Character counter
+GetInputLoop:
+    mov ah, 08h         ; Get character without echo (like password input)
     int 21h
-    cmp al, 13
-    je GetInput_Done
-    mov [bx], al
-    inc bx
+    cmp al, 13          ; Enter key
+    je GetInputDone
+    cmp al, 8           ; Backspace key
+    je HandleBackspace
+    cmp cx, 19          ; Limit input length
+    jae GetInputLoop
+    mov [si], al        ; Store character
+    inc si
     inc cx
-    jmp GetInput_Loop
-GetInput_Done:
-    mov al, 0
-    mov [bx], al
+    ; Display the character (since we're using non-echo input)
+    mov dl, al
+    mov ah, 02h
+    int 21h
+    jmp GetInputLoop
+    
+HandleBackspace:
+    cmp cx, 0           ; Check if buffer is empty
+    je GetInputLoop     ; If empty, ignore backspace
+    dec si              ; Move buffer pointer back
+    dec cx              ; Decrease counter
+    mov byte ptr [si], 0 ; Clear the character in buffer
+    mov dl, 8           ; Print backspace
+    mov ah, 02h
+    int 21h
+    mov dl, ' '         ; Print space to erase character
+    mov ah, 02h
+    int 21h
+    mov dl, 8           ; Print backspace again to position cursor
+    mov ah, 02h
+    int 21h
+    jmp GetInputLoop
+    
+GetInputDone:
+    mov byte ptr [si], 0 ; Null terminate
+    pop bx              ; Restore original buffer pointer
     ret
 
 GetMaskedInput:
-    mov cx, 0
-MaskedInput_Loop:
-    mov ah, 08h
+    push bx             ; Save original buffer pointer
+    mov si, bx          ; Use SI to track current position
+    mov cx, 0           ; Character counter
+MaskedLoop:
+    mov ah, 08h         ; Get character without echo
     int 21h
-    cmp al, 13
-    je MaskedInput_Done
-    mov [bx], al
-    inc bx
+    cmp al, 13          ; Enter key
+    je MaskedDone
+    cmp al, 8           ; Backspace key
+    je HandleMaskedBackspace
+    cmp cx, 19          ; Limit input length
+    jae MaskedLoop
+    mov [si], al        ; Store character
+    inc si
     inc cx
-    mov dl, '*'
+    mov dl, '*'         ; Show asterisk
     mov ah, 02h
     int 21h
-    jmp MaskedInput_Loop
-MaskedInput_Done:
-    mov al, 0
-    mov [bx], al
+    jmp MaskedLoop
+    
+HandleMaskedBackspace:
+    cmp cx, 0           ; Check if buffer is empty
+    je MaskedLoop       ; If empty, ignore backspace
+    dec si              ; Move buffer pointer back
+    dec cx              ; Decrease counter
+    mov byte ptr [si], 0 ; Clear the character in buffer
+    mov dl, 8           ; Print backspace
+    mov ah, 02h
+    int 21h
+    mov dl, ' '         ; Print space to erase asterisk
+    mov ah, 02h
+    int 21h
+    mov dl, 8           ; Print backspace again to position cursor
+    mov ah, 02h
+    int 21h
+    jmp MaskedLoop
+    
+MaskedDone:
+    mov byte ptr [si], 0 ; Null terminate
+    pop bx              ; Restore original buffer pointer
     ret
 
 StrCompare:
@@ -1269,17 +1503,37 @@ PrintString:
     int 21h
     ret
 
-PrintTab:
-    mov dl, 9
-    mov ah, 02h
-    int 21h
-    ret
-
 NewLine:
     mov dl, 13
     mov ah, 02h
     int 21h
     mov dl, 10
+    int 21h
+    ret
+
+WaitKey:
+    mov ah, 08h
+    int 21h
+    ret
+
+ClearScreen:
+    mov ah, 06h         ; Scroll window
+    mov al, 0           ; Clear entire screen
+    mov bh, 07h         ; Normal attribute
+    mov cx, 0           ; Upper left corner
+    mov dx, 184Fh       ; Lower right corner (80x25)
+    int 10h
+    
+    ; Set cursor to top-left
+    mov ah, 02h
+    mov bh, 0
+    mov dx, 0
+    int 10h
+    ret
+    
+PrintTab:
+    mov dl, 9
+    mov ah, 02h
     int 21h
     ret
 
