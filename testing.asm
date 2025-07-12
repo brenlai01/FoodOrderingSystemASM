@@ -28,12 +28,12 @@
     header db 10, "------------------------------------------------------------", 13,10
        db "                   Fast Food Inventory               ",13,10
        db "------------------------------------------------------------",13,10
-       db "ID",9, "Name",9,9, "Qty",9, "Price(RM)",13,10, "$"
+       db "ID",9, "Name",9,9,9,"Qty",9,9, "Price(RM)",13,10, "$"
 
     ; Food items
     FoodNames db "Burger        ",  "Hot Dog       ", "Fried Chicken ", "French Fries  ", "Hashbrowns    "
     FoodPrice dw 4, 8, 7, 5, 7
-    FoodQty dw 15, 10, 20, 20, 18
+    FoodQty dw 15, 10, 20, 5, 18
     
     ; Order Food
     msgOrderTitle db 13,10, "=== Order Food ===", 13,10, "$"
@@ -181,6 +181,7 @@ ShowFoodMenu:
 
     xor si, si  ; si = index
 
+; FIXED - Replace the quantity printing section in NextItem loop:
 NextItem:
     cmp si, 5
     jge EndShow
@@ -200,10 +201,9 @@ NextItem:
     add dx, ax
     call PrintText
     call PrintTab
+    call PrintTab
 
-    ; === Print Quantity ===
-    ; Replace the quantity printing section in NextItem loop with this:
-    ; === Print Quantity with Color ===
+    ; === Print Quantity with Color and FIXED alignment ===
     mov bx, si
     shl bx, 1
     mov ax, [FoodQty + bx]
@@ -212,24 +212,32 @@ NextItem:
     cmp ax, 5
     jae NormalColor      ; Jump if quantity >= 5
 
-    ; Set red color for low stock
-    push ax
-    mov al, 0Ch         ; Bright red color (12 in hex)
-    call SetTextColor
-    pop ax
-
-    call PrintNum       ; Print the quantity number
-    call ResetTextColor ; Reset to normal color
-    jmp QuantityPrinted
+    ; Print with BLINKING LOW warning for low stock
+    call PrintLowStockBlinking
+    ; DON'T print tabs here - the alignment is handled below
+    jmp SkipNormalQuantity
 
     NormalColor:
     call PrintNum       ; Print quantity in normal color
-
-    QuantityPrinted:
     push si
     call PrintTab
+    call PrintTab
+    pop si
+    jmp QuantityPrinted
+
+    SkipNormalQuantity:
+    push si
+    ; For low stock items, we need fewer spaces since "(LOW!)" takes up space
+    ; Adjust spacing to align with normal items
+    mov cx, 8  ; Add fewer spaces to align with normal items
+    SpaceLoop2:
+        mov dl, ' '
+        mov ah, 02h
+        int 21h
+        loop SpaceLoop2
     pop si
 
+    QuantityPrinted:
     ; === Print Price ===
     mov bx, si
     shl bx, 1
@@ -994,7 +1002,7 @@ ClearCartLoop:
     mov word ptr [CartTotal], 0
     ret
 
-; DISPLAY ALL ITEMS FUNCTION (NO CHANGES)
+; FIXED - Replace the quantity printing section in DisplayAllItems:
 DisplayAllItems:
     xor si, si
 DisplayNext:
@@ -1016,8 +1024,9 @@ DisplayNext:
     add dx, ax
     call PrintText
     call PrintTab
+    call PrintTab
     
-    ; Print Quantity
+    ; Print Quantity with FIXED alignment
     mov bx, si
     shl bx, 1
     mov ax, [FoodQty + bx]
@@ -1026,24 +1035,32 @@ DisplayNext:
     cmp ax, 5
     jae NormalColorOrder      ; Jump if quantity >= 5
 
-    ; Set red color for low stock
-    push ax
-    mov al, 0Ch         ; Bright red color
-    call SetTextColor
-    pop ax
-
-    call PrintNum       ; Print the quantity number
-    call ResetTextColor ; Reset to normal color
-    jmp QuantityPrintedOrder
+    ; Print with BLINKING LOW warning for low stock
+    call PrintLowStockBlinking
+    ; Don't print tabs here - spacing handled below
+    jmp SkipNormalQuantityOrder
 
     NormalColorOrder:
     call PrintNum       ; Print quantity in normal color
-
-    QuantityPrintedOrder:
     push si
     call PrintTab
+    call PrintTab
     pop si
-    
+    jmp QuantityPrintedOrder
+
+    SkipNormalQuantityOrder:
+    push si
+    ; For low stock, we need to adjust alignment
+    ; The "(LOW!)" text is about 6 characters, so we add fewer spaces
+    mov cx, 8  ; Add fewer spaces to align with normal items
+    SpaceLoop:
+        mov dl, ' '
+        mov ah, 02h
+        int 21h
+        loop SpaceLoop
+    pop si
+
+    QuantityPrintedOrder:
     ; Print Price
     mov bx, si
     shl bx, 1
@@ -1057,28 +1074,141 @@ DisplayNext:
     jmp DisplayNext
 DisplayEnd:
     call NewLine
-    ret
-    
-; Add this new function to set text color
-SetTextColor:
+    ret 
+
+; FIXED BLINKING SOLUTION - Print number with blinking (LOW!) but maintain column alignment
+PrintLowStockBlinking:
     push ax
     push bx
-    mov ah, 09h         ; BIOS function to set color
+    push cx
+    push dx
+    
+    ; First print the number normally
+    call PrintNumRed
+    
+    ; Now print " (LOW!)" with blinking
+    mov dl, ' '
+    mov ah, 02h
+    int 21h
+    
+    ; Print each character of "(LOW!)" with blinking attribute
+    ; Print '('
+    mov ah, 09h         ; Write character with attribute
+    mov al, '('
     mov bh, 0           ; Page number
-    mov bl, al          ; Color attribute (passed in AL)
-    mov cx, 1           ; Number of characters (not used for color setting)
+    mov bl, 8Ch         ; Blinking bright red (80h + 0Ch)
+    mov cx, 1           ; Number of characters
     int 10h
+    call MoveCursorRight
+    
+    ; Print 'L'
+    mov ah, 09h
+    mov al, 'L'
+    mov bh, 0
+    mov bl, 8Ch
+    mov cx, 1
+    int 10h
+    call MoveCursorRight
+    
+    ; Print 'O'
+    mov ah, 09h
+    mov al, 'O'
+    mov bh, 0
+    mov bl, 8Ch
+    mov cx, 1
+    int 10h
+    call MoveCursorRight
+    
+    ; Print 'W'
+    mov ah, 09h
+    mov al, 'W'
+    mov bh, 0
+    mov bl, 8Ch
+    mov cx, 1
+    int 10h
+    call MoveCursorRight
+    
+    ; Print '!'
+    mov ah, 09h
+    mov al, '!'
+    mov bh, 0
+    mov bl, 8Ch
+    mov cx, 1
+    int 10h
+    call MoveCursorRight
+    
+    ; Print ')'
+    mov ah, 09h
+    mov al, ')'
+    mov bh, 0
+    mov bl, 8Ch
+    mov cx, 1
+    int 10h
+    call MoveCursorRight
+    
+    pop dx
+    pop cx
     pop bx
     pop ax
     ret
 
-; Add this function to reset to normal color
-ResetTextColor:
+; Helper function to move cursor right
+MoveCursorRight:
     push ax
-    mov al, 07h         ; Normal white text on black background
-    call SetTextColor
+    push bx
+    push cx
+    push dx
+    
+    mov ah, 03h         ; Get cursor position
+    mov bh, 0
+    int 10h
+    inc dl              ; Move cursor right
+    mov ah, 02h         ; Set cursor position
+    int 10h
+    
+    pop dx
+    pop cx
+    pop bx
     pop ax
-    ret    
+    ret
+    
+; Function to print number in red
+PrintNumRed:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    xor cx, cx
+.next_digit_red:
+    xor dx, dx
+    mov bx, 10
+    div bx
+    push dx
+    inc cx
+    test ax, ax
+    jnz .next_digit_red
+    
+.print_loop_red:
+    pop dx
+    add dl, '0'
+    
+    ; Print character with red attribute
+    mov ah, 09h         ; Write character with attribute
+    mov al, dl
+    mov bh, 0           ; Page number
+    mov bl, 0Ch         ; Bright red (not blinking)
+    mov cx, 1           ; Number of characters
+    int 10h
+    call MoveCursorRight
+    
+    loop .print_loop_red
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
 
 ; ========== Utility Functions ==========
 
