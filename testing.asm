@@ -1,4 +1,3 @@
-; APU Food Store System in TASM - Login + Menu + Food List Display + Payment Processing
 .model small
 .stack 100h
 
@@ -67,12 +66,17 @@
     msgNoOrders db 13,10, "No items in cart!", 13,10, "$"
     
     ; Restock messages
+    msgCurrentStock db 'Current stock: $'
     msgRestockTitle db 13,10, "=== Restock Inventory ===", 13,10, "$"
     msgSelectRestock db "Enter Food ID (0-4) or 9 to finish: $"
     msgRestockSuccess db 13,10, "Item restocked!", 13,10, "$"
     msgRestockInvalidID db 13,10, "Invalid Food ID! Please enter 0-4 or 9.", 13,10, "$"
 
     ; Checkout messages
+    msgCartSummary db 'Cart: $'
+    msgItems db ' items$'
+    msgTotal db ' | Total: RM$'
+    msgItemTotal db ' (Total: RM$'
     msgCheckoutTitle db 13,10, "=== Checkout ===", 13,10, "$"
     msgCartHeader db "Your Cart:", 13,10, "$"
     msgCartItem db "Item: $"
@@ -102,8 +106,7 @@
     msgRestockQty db 13,10, "Enter quantity to restock (1-99): $"
     msgRestockQtySuccess db 13,10, "Successfully added $"
     msgRestockQtyUnits db " units to inventory!", 13,10, "$"
-    msgRestockQtyInvalid db 13,10, "Invalid quantity! Please enter 1-99.", 13,10, "$"
-    
+    msgRestockQtyInvalid db 13,10, "Invalid quantity! Please enter 1-99.", 13,10, "$"   
 
 .code
 main:
@@ -372,73 +375,15 @@ NextItem:
     cmp si, 5
     jge EndShow
 
-    ; === Print ID ===
-    mov ax, si
-    push si
-    call PrintNum
-    pop si
-    call PrintTab
-
-    ; === Print Name ===
-    mov ax, si
-    mov bx, 14
-    mul bx
-    mov dx, offset FoodNames
-    add dx, ax
-    call PrintText
-    call PrintTab
-    call PrintTab
-
-    ; === Print Quantity with Color and FIXED alignment ===
-    mov bx, si
-    shl bx, 1
-    mov ax, [FoodQty + bx]
-
-    ; Check if quantity is less than 5
-    cmp ax, 5
-    jae NormalColor      ; Jump if quantity >= 5
-
-    ; Print with BLINKING LOW warning for low stock
-    call PrintLowStockBlinking
-    ; DON'T print tabs here - the alignment is handled below
-    jmp SkipNormalQuantity
-
-    NormalColor:
-    call PrintNum       ; Print quantity in normal color
-    push si
-    call PrintTab
-    call PrintTab
-    pop si
-    jmp QuantityPrinted
-
-    SkipNormalQuantity:
-    push si
-    ; For low stock items, we need fewer spaces since "(LOW!)" takes up space
-    ; Adjust spacing to align with normal items
-    mov cx, 8  ; Add fewer spaces to align with normal items
-    SpaceLoop2:
-        mov dl, ' '
-        mov ah, 02h
-        int 21h
-        loop SpaceLoop2
-    pop si
-
-    QuantityPrinted:
-    ; === Print Price ===
-    mov bx, si
-    shl bx, 1
-    mov ax, [FoodPrice + bx]
-    push si
-    call PrintNum
-    pop si
-    call NewLine
-
+    call PrintItemDetails
+    
     inc si
     jmp NextItem
 
 EndShow:
     jmp MenuLoop
 
+; Restock Function
 Restock:
     lea dx, msgRestockTitle
     call PrintString
@@ -502,51 +447,8 @@ AddRestockItem:
     push ax                 ; Save current stock quantity
     
     ; Display current stock
-    mov dl, 'C'
-    mov ah, 02h
-    int 21h
-    mov dl, 'u'
-    mov ah, 02h
-    int 21h
-    mov dl, 'r'
-    mov ah, 02h
-    int 21h
-    mov dl, 'r'
-    mov ah, 02h
-    int 21h
-    mov dl, 'e'
-    mov ah, 02h
-    int 21h
-    mov dl, 'n'
-    mov ah, 02h
-    int 21h
-    mov dl, 't'
-    mov ah, 02h
-    int 21h
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, 's'
-    mov ah, 02h
-    int 21h
-    mov dl, 't'
-    mov ah, 02h
-    int 21h
-    mov dl, 'o'
-    mov ah, 02h
-    int 21h
-    mov dl, 'c'
-    mov ah, 02h
-    int 21h
-    mov dl, 'k'
-    mov ah, 02h
-    int 21h
-    mov dl, ':'
-    mov ah, 02h
-    int 21h
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
+    lea dx, msgCurrentStock
+    call PrintString
     
     pop ax                  ; Get saved current stock quantity
     call PrintNum           ; Print current stock quantity
@@ -822,6 +724,7 @@ PaymentLoop:
     
     ; Payment is sufficient, show payment details
     call ShowPaymentDetails
+    
     ret
 
 PaymentError:
@@ -978,41 +881,10 @@ PrintCartItem:
 
 ; FUNCTION TO PRINT ITEM TOTAL
 PrintItemTotal:
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, '('
-    mov ah, 02h
-    int 21h
     
-    ; Print "Total: RM"
-    mov dl, 'T'
-    mov ah, 02h
-    int 21h
-    mov dl, 'o'
-    mov ah, 02h
-    int 21h
-    mov dl, 't'
-    mov ah, 02h
-    int 21h
-    mov dl, 'a'
-    mov ah, 02h
-    int 21h
-    mov dl, 'l'
-    mov ah, 02h
-    int 21h
-    mov dl, ':'
-    mov ah, 02h
-    int 21h
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, 'R'
-    mov ah, 02h
-    int 21h
-    mov dl, 'M'
-    mov ah, 02h
-    int 21h
+    ; Print " (Total: RM"
+    lea dx, msgItemTotal
+    call PrintString
     
     ; Calculate and print item total
     mov al, [CartItems + si]
@@ -1087,86 +959,20 @@ CountCartItems:
 NoCartSummary:
     ret
 
-; HELPER FUNCTIONS FOR CART SUMMARY
+; SHORTENED HELPER FUNCTIONS FOR CART SUMMARY
 PrintCartSummaryText:
-    mov dl, 'C'
-    mov ah, 02h
-    int 21h
-    mov dl, 'a'
-    mov ah, 02h
-    int 21h
-    mov dl, 'r'
-    mov ah, 02h
-    int 21h
-    mov dl, 't'
-    mov ah, 02h
-    int 21h
-    mov dl, ':'
-    mov ah, 02h
-    int 21h
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
+    lea dx, msgCartSummary
+    call PrintString
     ret
 
 PrintItemsText:
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, 'i'
-    mov ah, 02h
-    int 21h
-    mov dl, 't'
-    mov ah, 02h
-    int 21h
-    mov dl, 'e'
-    mov ah, 02h
-    int 21h
-    mov dl, 'm'
-    mov ah, 02h
-    int 21h
-    mov dl, 's'
-    mov ah, 02h
-    int 21h
+    lea dx, msgItems
+    call PrintString
     ret
 
 PrintTotalText:
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, '|'
-    mov ah, 02h
-    int 21h
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, 'T'
-    mov ah, 02h
-    int 21h
-    mov dl, 'o'
-    mov ah, 02h
-    int 21h
-    mov dl, 't'
-    mov ah, 02h
-    int 21h
-    mov dl, 'a'
-    mov ah, 02h
-    int 21h
-    mov dl, 'l'
-    mov ah, 02h
-    int 21h
-    mov dl, ':'
-    mov ah, 02h
-    int 21h
-    mov dl, ' '
-    mov ah, 02h
-    int 21h
-    mov dl, 'R'
-    mov ah, 02h
-    int 21h
-    mov dl, 'M'
-    mov ah, 02h
-    int 21h
+    lea dx, msgTotal
+    call PrintString
     ret
 
 ; FUNCTION TO CLEAR CART
@@ -1190,14 +996,27 @@ DisplayNext:
     cmp si, 5
     jge DisplayEnd
     
-    ; Print ID
-    mov ax, si
-    push si
-    call PrintNum
-    pop si
-    call PrintTab
+    call PrintItemDetails
     
-    ; Print Name
+    inc si
+    jmp DisplayNext
+DisplayEnd:
+    call NewLine
+    ret 
+
+; Create a reusable subroutine for printing item details
+PrintItemDetails:
+    ; Input: SI = item index
+    ; Prints: ID, Name, Quantity (with low stock warning), Price
+    
+    push si
+    
+    ; === Print ID ===
+    mov ax, si
+    call PrintNum
+    call PrintTab
+
+    ; === Print Name ===
     mov ax, si
     mov bx, 14
     mul bx
@@ -1206,56 +1025,47 @@ DisplayNext:
     call PrintText
     call PrintTab
     call PrintTab
-    
-    ; Print Quantity with FIXED alignment
+
+    ; === Print Quantity with Color and alignment ===
     mov bx, si
     shl bx, 1
     mov ax, [FoodQty + bx]
 
     ; Check if quantity is less than 5
     cmp ax, 5
-    jae NormalColorOrder      ; Jump if quantity >= 5
+    jae NormalColor      ; Jump if quantity >= 5
 
     ; Print with BLINKING LOW warning for low stock
     call PrintLowStockBlinking
-    ; Don't print tabs here - spacing handled below
-    jmp SkipNormalQuantityOrder
+    ; DON'T print tabs here - the alignment is handled below
+    jmp SkipNormalQuantity
 
-    NormalColorOrder:
+    NormalColor:
     call PrintNum       ; Print quantity in normal color
-    push si
     call PrintTab
     call PrintTab
-    pop si
-    jmp QuantityPrintedOrder
+    jmp QuantityPrinted
 
-    SkipNormalQuantityOrder:
-    push si
-    ; For low stock, we need to adjust alignment
-    ; The "(LOW!)" text is about 6 characters, so we add fewer spaces
+    SkipNormalQuantity:
+    ; For low stock items, we need fewer spaces since "(LOW!)" takes up space
+    ; Adjust spacing to align with normal items
     mov cx, 8  ; Add fewer spaces to align with normal items
     SpaceLoop:
         mov dl, ' '
         mov ah, 02h
         int 21h
         loop SpaceLoop
-    pop si
 
-    QuantityPrintedOrder:
-    ; Print Price
+    QuantityPrinted:
+    ; === Print Price ===
     mov bx, si
     shl bx, 1
     mov ax, [FoodPrice + bx]
-    push si
     call PrintNum
+    call NewLine
+
     pop si
-    call NewLine
-    
-    inc si
-    jmp DisplayNext
-DisplayEnd:
-    call NewLine
-    ret 
+    ret
 
 ; FIXED BLINKING SOLUTION - Print number with blinking (LOW!) but maintain column alignment
 PrintLowStockBlinking:
@@ -1390,6 +1200,8 @@ PrintNumRed:
     pop bx
     pop ax
     ret
+    
+
 
 ; ========== Utility Functions ==========
 

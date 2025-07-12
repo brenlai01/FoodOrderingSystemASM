@@ -145,7 +145,7 @@ StartLogin:
     jmp StartLogin
 
 LoginSuccess:
-    call ClearScreen
+    
     lea dx, msgSuccess
     call PrintString
     call MainMenu
