@@ -422,6 +422,10 @@ SkipDone:
     ret  
 
 DoLogout:
+    ; Log logout event
+    lea dx, auditLogout
+    call LogAuditEvent
+
     lea dx, msgLogout
     call PrintString
     call WaitKey
