@@ -1,13 +1,11 @@
-; Simple Login System with File Reading in TASM - Fixed Multiple Users + Audit Logging
+; Simple Login System with File Reading in TASM - Fixed Multiple Users
 .model small
 .stack 100h
 
 .data
     ; File handling
     filename db "users.txt", 0
-    auditfile db "audit.txt", 0
     filehandle dw 0
-    audithandle dw 0
     buffer db 100 dup(0)
     
     ; User input
@@ -20,11 +18,6 @@
     
     ; Login attempt counter
     attemptCount db 0
-    
-    ; Audit logging variables
-    auditBuffer db 200 dup(0)
-    dateStr db 20 dup(0)
-    timeStr db 20 dup(0)
     
     ; Messages
     msgWelcome db "=== File-Based Login System ===$"
@@ -43,13 +36,6 @@
            db "3. Logout",13,10
            db "Enter choice: $"
     msgLogout db 13,10,"Logging out...$"
-    
-    ; Audit message templates
-    auditLoginSuccess db " - LOGIN SUCCESS - User: $"
-    auditLoginFail db " - LOGIN FAILED - User: $"
-    auditLockout db " - ACCOUNT LOCKED - User: $"
-    auditLogout db " - LOGOUT - User: $"
-    auditNewline db 13,10,"$"
 
 .code
 main:
@@ -78,10 +64,6 @@ StartLogin:
     cmp al, 1
     je LoginSuccess
     
-    ; Login failed - log failed attempt
-    lea dx, auditLoginFail
-    call LogAuditEvent
-    
     ; Login failed - increment attempt counter
     inc byte ptr [attemptCount]
     lea dx, msgFail
@@ -95,20 +77,12 @@ StartLogin:
     jmp StartLogin
 
 LoginSuccess:
-    ; Log successful login
-    lea dx, auditLoginSuccess
-    call LogAuditEvent
-    
     lea dx, msgSuccess
     call PrintString
     call ShowMenu
     jmp StartLogin
 
 AccountLocked:
-    ; Log account lockout
-    lea dx, auditLockout
-    call LogAuditEvent
-    
     lea dx, msgLockout
     call PrintString
     ; Exit program
@@ -255,6 +229,8 @@ ClearFileCredentials:
     pop ax
     ret
 
+
+
 ; Function to parse a word from file - SIMPLIFIED
 ParseWord:
     push cx
@@ -367,369 +343,10 @@ ShowMenu:
     ret
 
 DoLogout:
-    ; Log logout event
-    lea dx, auditLogout
-    call LogAuditEvent
-    
     lea dx, msgLogout
     call PrintString
     call WaitKey
     ret
-
-; ===== AUDIT LOGGING FUNCTIONS =====
-
-; Function to log audit events
-; Input: DX = pointer to audit message template
-LogAuditEvent:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    push di
-    
-    ; Get current date and time
-    call GetDateTime
-    
-    ; Build audit message
-    call BuildAuditMessage
-    
-    ; Write to audit file
-    call WriteAuditToFile
-    
-    pop di
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to get current date and time
-GetDateTime:
-    push ax
-    push bx
-    push cx
-    push dx
-    
-    ; Get date
-    mov ah, 2Ah         ; Get system date
-    int 21h
-    ; AL = day of week, CX = year, DH = month, DL = day
-    
-    ; Convert date to string format (YYYY-MM-DD)
-    call FormatDate
-    
-    ; Get time
-    mov ah, 2Ch         ; Get system time
-    int 21h
-    ; CH = hour, CL = minute, DH = second, DL = centisecond
-    
-    ; Convert time to string format (HH:MM:SS)
-    call FormatTime
-    
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to format date as YYYY-MM-DD
-FormatDate:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    
-    lea si, dateStr
-    
-    ; Format year (CX contains year)
-    mov ax, cx
-    call NumToStr4      ; Convert 4-digit year
-    
-    ; Add dash
-    mov byte ptr [si], '-'
-    inc si
-    
-    ; Format month (DH contains month)
-    mov al, dh
-    call NumToStr2      ; Convert 2-digit month
-    
-    ; Add dash
-    mov byte ptr [si], '-'
-    inc si
-    
-    ; Format day (DL contains day)
-    mov al, dl
-    call NumToStr2      ; Convert 2-digit day
-    
-    ; Null terminate
-    mov byte ptr [si], 0
-    
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to format time as HH:MM:SS
-FormatTime:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    
-    lea si, timeStr
-    
-    ; Format hour (CH contains hour)
-    mov al, ch
-    call NumToStr2      ; Convert 2-digit hour
-    
-    ; Add colon
-    mov byte ptr [si], ':'
-    inc si
-    
-    ; Format minute (CL contains minute)
-    mov al, cl
-    call NumToStr2      ; Convert 2-digit minute
-    
-    ; Add colon
-    mov byte ptr [si], ':'
-    inc si
-    
-    ; Format second (DH contains second)
-    mov al, dh
-    call NumToStr2      ; Convert 2-digit second
-    
-    ; Null terminate
-    mov byte ptr [si], 0
-    
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to convert number to 4-digit string
-NumToStr4:
-    push ax
-    push bx
-    push cx
-    push dx
-    
-    mov bx, 1000
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    mov ax, dx
-    mov bx, 100
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    mov ax, dx
-    mov bx, 10
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    add dl, '0'
-    mov [si], dl
-    inc si
-    
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to convert number to 2-digit string
-NumToStr2:
-    push ax
-    push bx
-    push dx
-    
-    mov bl, 10
-    xor ah, ah
-    div bl
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    add ah, '0'
-    mov [si], ah
-    inc si
-    
-    pop dx
-    pop bx
-    pop ax
-    ret
-
-; Function to build audit message
-BuildAuditMessage:
-    push ax
-    push bx
-    push cx
-    push si
-    push di
-    
-    lea di, auditBuffer
-    
-    ; Copy date
-    lea si, dateStr
-    call CopyString
-    
-    ; Add space
-    mov byte ptr [di], ' '
-    inc di
-    
-    ; Copy time
-    lea si, timeStr
-    call CopyString
-    
-    ; Copy audit message template (without the $ terminator)
-    mov si, dx          ; DX contains pointer to message template
-    call CopyStringNoTerminator
-    
-    ; Copy username
-    lea si, inputUser
-    call CopyString
-    
-    ; Add newline
-    mov byte ptr [di], 13
-    inc di
-    mov byte ptr [di], 10
-    inc di
-    
-    ; Null terminate
-    mov byte ptr [di], 0
-    
-    pop di
-    pop si
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to copy string with null terminator
-CopyString:
-    push ax
-CopyStringLoop:
-    mov al, [si]
-    cmp al, 0
-    je CopyStringDone
-    mov [di], al
-    inc si
-    inc di
-    jmp CopyStringLoop
-CopyStringDone:
-    pop ax
-    ret
-
-; Function to copy string without $ terminator
-CopyStringNoTerminator:
-    push ax
-CopyStringNoTermLoop:
-    mov al, [si]
-    cmp al, 0
-    je CopyStringNoTermDone
-    cmp al, '$'
-    je CopyStringNoTermDone
-    mov [di], al
-    inc si
-    inc di
-    jmp CopyStringNoTermLoop
-CopyStringNoTermDone:
-    pop ax
-    ret
-
-; Function to write audit message to file
-WriteAuditToFile:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    
-    ; Open audit file for append (or create if not exists)
-    mov ah, 3Dh         ; Open file
-    mov al, 2           ; Read/write mode
-    lea dx, auditfile
-    int 21h
-    jnc FileOpenSuccess
-    
-    ; File doesn't exist, create it
-    mov ah, 3Ch         ; Create file
-    mov cx, 0           ; Normal file attribute
-    lea dx, auditfile
-    int 21h
-    jc WriteAuditError
-    
-FileOpenSuccess:
-    mov [audithandle], ax
-    
-    ; Seek to end of file
-    mov ah, 42h         ; Seek
-    mov al, 2           ; From end of file
-    mov bx, [audithandle]
-    mov cx, 0
-    mov dx, 0
-    int 21h
-    
-    ; Calculate message length
-    lea si, auditBuffer
-    call StrLen
-    mov cx, ax          ; Message length in CX
-    
-    ; Write to file
-    mov ah, 40h         ; Write to file
-    mov bx, [audithandle]
-    lea dx, auditBuffer
-    int 21h
-    jc WriteAuditError
-    
-    ; Close file
-    mov ah, 3Eh
-    mov bx, [audithandle]
-    int 21h
-    
-WriteAuditError:
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to calculate string length
-StrLen:
-    push bx
-    push si
-    mov bx, si
-    mov ax, 0
-StrLenLoop:
-    cmp byte ptr [si], 0
-    je StrLenDone
-    inc si
-    inc ax
-    jmp StrLenLoop
-StrLenDone:
-    pop si
-    pop bx
-    ret
-
-; ===== END OF AUDIT LOGGING FUNCTIONS =====
 
 ; Utility Functions - FIXED VERSION
 GetInput:
@@ -879,9 +496,3 @@ end main
 ; Jeff 1234
 ; admin secret
 ; user1 pass123
-;
-; The audit.txt file will be automatically created and will contain entries like:
-; 2025-01-15 14:30:25 - LOGIN SUCCESS - User: John
-; 2025-01-15 14:31:10 - LOGIN FAILED - User: BadUser
-; 2025-01-15 14:32:45 - LOGOUT - User: John
-; 2025-01-15 14:33:00 - ACCOUNT LOCKED - User: Attacker

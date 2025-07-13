@@ -4,8 +4,11 @@
 .data
     ; File handling
     filename db "users.txt", 0
+    auditfile db "audit.txt", 0
     filehandle dw 0
+    audithandle dw 0
     buffer db 100 dup(0)
+    
     
     ; User input
     inputUser db 20 dup(0)
@@ -17,6 +20,11 @@
     
     ; Login attempt counter
     attemptCount db 0
+    
+    ; Audit logging variables
+    auditBuffer db 200 dup(0)
+    dateStr db 20 dup(0)
+    timeStr db 20 dup(0)
     
     ; Messages
     msgWelcome db "=== APU Food Store System ===$"
@@ -46,6 +54,13 @@
     msgInvalid db 13,10, "Invalid choice. Try again.", 13,10, "$"
     msgLogout db 13,10, "Logging out to login screen...", 13,10, "$"
 
+    ; Audit message templates
+    auditLoginSuccess db " - LOGIN SUCCESS - User: $"
+    auditLoginFail db " - LOGIN FAILED - User: $"
+    auditLockout db " - ACCOUNT LOCKED - User: $"
+    auditLogout db " - LOGOUT - User: $"
+    auditNewline db 13,10,"$"
+    
     header db 10, "------------------------------------------------------------", 13,10
        db "                   Fast Food Inventory               ",13,10
        db "------------------------------------------------------------",13,10
@@ -135,6 +150,10 @@ StartLogin:
     cmp al, 1
     je LoginSuccess
     
+    ; Login failed - log failed attempt
+    lea dx, auditLoginFail
+    call LogAuditEvent
+    
     ; Login failed - increment attempt counter
     inc byte ptr [attemptCount]
     lea dx, msgFail
@@ -148,12 +167,20 @@ StartLogin:
     jmp StartLogin
 
 LoginSuccess:
+    ; Log successful login
+    lea dx, auditLoginSuccess
+    call LogAuditEvent
+    
     lea dx, msgSuccess
     call PrintString
     call MainMenu
     jmp StartLogin
 
 AccountLocked:
+    ; Log account lockout
+    lea dx, auditLockout
+    call LogAuditEvent
+    
     lea dx, msgLockout
     call PrintString
     ; Exit program
@@ -195,50 +222,81 @@ FileReadError:
     mov al, 0           ; Return failure
     ret
 
-; Function to parse file content and check credentials
+; Function to parse file content and check credentials - FIXED JUMP RANGE
 ParseAndCheck:
     lea si, buffer      ; Source: file buffer
     
 ParseLoop:
-    ; Skip to next line if current character is newline
+    ; Check if we've reached end of buffer
     cmp byte ptr [si], 0
-    je ParseFailed
-    cmp byte ptr [si], 10
-    je NextLine
-    cmp byte ptr [si], 13
-    je NextLine
+    jne ParseContinue
+    jmp ParseFailed
+    
+ParseContinue:
+    ; Skip empty lines and whitespace at start
+    call SkipWhitespaceAndNewlines
+    cmp byte ptr [si], 0
+    jne ParseUserPass
+    jmp ParseFailed
+    
+ParseUserPass:
+    ; Clear previous username and password
+    call ClearFileCredentials
     
     ; Parse username from current line
     lea di, fileUser
-    call ParseToken
+    call ParseWord
+    
+    ; Check if we got a username
+    cmp byte ptr [fileUser], 0
+    jne ParsePassword
+    jmp ParseFailed
+    
+ParsePassword:
+    ; Skip whitespace between username and password
+    call SkipSpaces
     
     ; Parse password from current line
     lea di, filePass
-    call ParseToken
+    call ParseWord
     
+    ; Check if we got a password
+    cmp byte ptr [filePass], 0
+    jne CompareCredentials
+    jmp NextLine
+    
+CompareCredentials:
     ; Compare credentials
+    push si             ; Save current position
+    
     lea si, inputUser
     lea di, fileUser
     call StrCompare
     cmp al, 1
-    jne NextCredential
+    jne CheckPassword
+    jmp PasswordCheck
     
+CheckPassword:
+    jmp NextCredential
+    
+PasswordCheck:
     lea si, inputPass
     lea di, filePass
     call StrCompare
     cmp al, 1
-    je ParseSuccess
+    jne NextCredential
+    jmp ParseSuccess
     
 NextCredential:
-    ; Move to next line
-    call SkipToNextLine
-    jmp ParseLoop
-
+    pop si              ; Restore current position
+    jmp NextLine
+    
 NextLine:
-    inc si
+    call SkipToNextLine
     jmp ParseLoop
     
 ParseSuccess:
+    pop si              ; Clean up stack
     mov al, 1
     ret
     
@@ -246,61 +304,121 @@ ParseFailed:
     mov al, 0
     ret
 
-; Function to parse a token (username or password) from file
-ParseToken:
+; Function to clear file credentials buffers
+ClearFileCredentials:
+    push ax
+    push cx
     push di
-    mov cx, 0
-ParseTokenLoop:
-    mov al, [si]
-    cmp al, ' '         ; Space separator
-    je ParseTokenDone
-    cmp al, 9           ; Tab separator
-    je ParseTokenDone
-    cmp al, 13          ; Carriage return
-    je ParseTokenDone
-    cmp al, 10          ; Line feed
-    je ParseTokenDone
-    cmp al, 0           ; End of buffer
-    je ParseTokenDone
     
+    ; Clear fileUser
+    lea di, fileUser
+    mov cx, 20
+    mov al, 0
+    rep stosb
+    
+    ; Clear filePass
+    lea di, filePass
+    mov cx, 20
+    mov al, 0
+    rep stosb
+    
+    pop di
+    pop cx
+    pop ax
+    ret
+
+
+
+; Function to parse a word from file - SIMPLIFIED
+ParseWord:
+    push cx
+    mov cx, 0
+    
+ParseWordLoop:
+    mov al, [si]
+    
+    ; Check for end conditions
+    cmp al, 0           ; End of buffer
+    je ParseWordDone
+    cmp al, 13          ; Carriage return
+    je ParseWordDone
+    cmp al, 10          ; Line feed
+    je ParseWordDone
+    cmp al, ' '         ; Space separator
+    je ParseWordDone
+    cmp al, 9           ; Tab separator
+    je ParseWordDone
+    
+    ; Store character
     mov [di], al
     inc si
     inc di
     inc cx
-    cmp cx, 19          ; Limit token length
-    jb ParseTokenLoop
+    cmp cx, 19          ; Limit word length
+    jb ParseWordLoop
     
-ParseTokenDone:
+ParseWordDone:
     mov byte ptr [di], 0    ; Null terminate
-    ; Skip whitespace
-    cmp byte ptr [si], ' '
+    pop cx
+    ret
+
+; Function to skip whitespace and newlines
+SkipWhitespaceAndNewlines:
+    push ax
+SkipWhitespaceLoop:
+    mov al, [si]
+    cmp al, 0
+    je SkipWhitespaceDone
+    cmp al, ' '
+    je SkipWhitespaceChar
+    cmp al, 9           ; Tab
+    je SkipWhitespaceChar
+    cmp al, 13          ; CR
+    je SkipWhitespaceChar
+    cmp al, 10          ; LF
+    je SkipWhitespaceChar
+    jmp SkipWhitespaceDone
+    
+SkipWhitespaceChar:
+    inc si
+    jmp SkipWhitespaceLoop
+    
+SkipWhitespaceDone:
+    pop ax
+    ret
+
+; Function to skip spaces only
+SkipSpaces:
+    push ax
+SkipSpacesLoop:
+    mov al, [si]
+    cmp al, ' '
     je SkipSpace
-    cmp byte ptr [si], 9
+    cmp al, 9           ; Tab
     je SkipSpace
-    jmp ParseTokenExit
+    jmp SkipSpacesDone
     
 SkipSpace:
     inc si
+    jmp SkipSpacesLoop
     
-ParseTokenExit:
-    pop di
+SkipSpacesDone:
+    pop ax
     ret
 
-; Function to skip to next line
+; Function to skip to next line - COMPACT VERSION
 SkipToNextLine:
+    push ax
 SkipLoop:
     mov al, [si]
-    cmp al, 0
-    je SkipDone
-    cmp al, 10
+    cmp al, 0           ; End of buffer
     je SkipDone
     inc si
-    jmp SkipLoop
+    cmp al, 10          ; Line feed
+    jne SkipLoop
+    
 SkipDone:
-    cmp byte ptr [si], 10
-    jne SkipExit
-    inc si
-SkipExit:
+    pop ax
     ret  
 
 DoLogout:
@@ -311,6 +429,357 @@ DoLogout:
     lea dx, msgWelcome
     call PrintString
     ret  
+    
+; Function to log audit events
+; Input: DX = pointer to audit message template
+LogAuditEvent:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    
+    ; Get current date and time
+    call GetDateTime
+    
+    ; Build audit message
+    call BuildAuditMessage
+    
+    ; Write to audit file
+    call WriteAuditToFile
+    
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to get current date and time
+GetDateTime:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    ; Get date
+    mov ah, 2Ah         ; Get system date
+    int 21h
+    ; AL = day of week, CX = year, DH = month, DL = day
+    
+    ; Convert date to string format (YYYY-MM-DD)
+    call FormatDate
+    
+    ; Get time
+    mov ah, 2Ch         ; Get system time
+    int 21h
+    ; CH = hour, CL = minute, DH = second, DL = centisecond
+    
+    ; Convert time to string format (HH:MM:SS)
+    call FormatTime
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to format date as YYYY-MM-DD
+FormatDate:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    lea si, dateStr
+    
+    ; Format year (CX contains year)
+    mov ax, cx
+    call NumToStr4      ; Convert 4-digit year
+    
+    ; Add dash
+    mov byte ptr [si], '-'
+    inc si
+    
+    ; Format month (DH contains month)
+    mov al, dh
+    call NumToStr2      ; Convert 2-digit month
+    
+    ; Add dash
+    mov byte ptr [si], '-'
+    inc si
+    
+    ; Format day (DL contains day)
+    mov al, dl
+    call NumToStr2      ; Convert 2-digit day
+    
+    ; Null terminate
+    mov byte ptr [si], 0
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to format time as HH:MM:SS
+FormatTime:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    lea si, timeStr
+    
+    ; Format hour (CH contains hour)
+    mov al, ch
+    call NumToStr2      ; Convert 2-digit hour
+    
+    ; Add colon
+    mov byte ptr [si], ':'
+    inc si
+    
+    ; Format minute (CL contains minute)
+    mov al, cl
+    call NumToStr2      ; Convert 2-digit minute
+    
+    ; Add colon
+    mov byte ptr [si], ':'
+    inc si
+    
+    ; Format second (DH contains second)
+    mov al, dh
+    call NumToStr2      ; Convert 2-digit second
+    
+    ; Null terminate
+    mov byte ptr [si], 0
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert number to 4-digit string
+NumToStr4:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov bx, 1000
+    xor dx, dx
+    div bx
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    mov ax, dx
+    mov bx, 100
+    xor dx, dx
+    div bx
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    mov ax, dx
+    mov bx, 10
+    xor dx, dx
+    div bx
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    add dl, '0'
+    mov [si], dl
+    inc si
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert number to 2-digit string
+NumToStr2:
+    push ax
+    push bx
+    push dx
+    
+    mov bl, 10
+    xor ah, ah
+    div bl
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    add ah, '0'
+    mov [si], ah
+    inc si
+    
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+; Function to build audit message
+BuildAuditMessage:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+    
+    lea di, auditBuffer
+    
+    ; Copy date
+    lea si, dateStr
+    call CopyString
+    
+    ; Add space
+    mov byte ptr [di], ' '
+    inc di
+    
+    ; Copy time
+    lea si, timeStr
+    call CopyString
+    
+    ; Copy audit message template (without the $ terminator)
+    mov si, dx          ; DX contains pointer to message template
+    call CopyStringNoTerminator
+    
+    ; Copy username
+    lea si, inputUser
+    call CopyString
+    
+    ; Add newline
+    mov byte ptr [di], 13
+    inc di
+    mov byte ptr [di], 10
+    inc di
+    
+    ; Null terminate
+    mov byte ptr [di], 0
+    
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to copy string with null terminator
+CopyString:
+    push ax
+CopyStringLoop:
+    mov al, [si]
+    cmp al, 0
+    je CopyStringDone
+    mov [di], al
+    inc si
+    inc di
+    jmp CopyStringLoop
+CopyStringDone:
+    pop ax
+    ret
+
+; Function to copy string without $ terminator
+CopyStringNoTerminator:
+    push ax
+CopyStringNoTermLoop:
+    mov al, [si]
+    cmp al, 0
+    je CopyStringNoTermDone
+    cmp al, '$'
+    je CopyStringNoTermDone
+    mov [di], al
+    inc si
+    inc di
+    jmp CopyStringNoTermLoop
+CopyStringNoTermDone:
+    pop ax
+    ret
+
+; Function to write audit message to file
+WriteAuditToFile:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    ; Open audit file for append (or create if not exists)
+    mov ah, 3Dh         ; Open file
+    mov al, 2           ; Read/write mode
+    lea dx, auditfile
+    int 21h
+    jnc FileOpenSuccess
+    
+    ; File doesn't exist, create it
+    mov ah, 3Ch         ; Create file
+    mov cx, 0           ; Normal file attribute
+    lea dx, auditfile
+    int 21h
+    jc WriteAuditError
+    
+FileOpenSuccess:
+    mov [audithandle], ax
+    
+    ; Seek to end of file
+    mov ah, 42h         ; Seek
+    mov al, 2           ; From end of file
+    mov bx, [audithandle]
+    mov cx, 0
+    mov dx, 0
+    int 21h
+    
+    ; Calculate message length
+    lea si, auditBuffer
+    call StrLen
+    mov cx, ax          ; Message length in CX
+    
+    ; Write to file
+    mov ah, 40h         ; Write to file
+    mov bx, [audithandle]
+    lea dx, auditBuffer
+    int 21h
+    jc WriteAuditError
+    
+    ; Close file
+    mov ah, 3Eh
+    mov bx, [audithandle]
+    int 21h
+    
+WriteAuditError:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to calculate string length
+StrLen:
+    push bx
+    push si
+    mov bx, si
+    mov ax, 0
+StrLenLoop:
+    cmp byte ptr [si], 0
+    je StrLenDone
+    inc si
+    inc ax
+    jmp StrLenLoop
+StrLenDone:
+    pop si
+    pop bx
+    ret   
 
 MainMenu:
 MenuLoop:
