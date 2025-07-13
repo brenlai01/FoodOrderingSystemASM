@@ -26,8 +26,31 @@
     dateStr db 20 dup(0)
     timeStr db 20 dup(0)
     
+    ; Burger sprite data
+    burger_line1 DB ' .~"""~. ', 0
+    burger_line2 DB '|#######|', 0
+    burger_line3 DB '|~~~~~~~|', 0
+    burger_line4 DB ' `~"""~` ', 0
+    
+    ; Animation variables - burgers move across banner area
+    burger1_x DW 0             ; Burger 1 X position
+    burger1_y DW 2             ; Burger 1 Y position (above banner)
+    burger2_x DW 18            ; Burger 2 X position
+    burger2_y DW 2             ; Burger 2 Y position
+    burger3_x DW 36            ; Burger 3 X position
+    burger3_y DW 2             ; Burger 3 Y position
+    burger4_x DW 54            ; Burger 4 X position
+    burger4_y DW 2             ; Burger 4 Y position
+    max_x DW 71                ; Maximum X position
+    delay_count DW 0           ; Delay counter
+    delay_max DW 65000         ; Delay between frames (faster)
+    animation_frames DW 50     ; Number of animation frames to show
+    
+    ; 2. Update the clear_line size (9 spaces for 9-character wide burger):
+    clear_line DB '         $'  ; 9 spaces to clear burger
+    
     ; Messages
-    msgWelcome db "=== APU Food Store System ===$"
+    msgWelcome db "============================ APU Food Store System =============================$"
     msgUser db 13,10,"Username: $"
     msgPass db 13,10,"Password: $"
     msgSuccess db 13,10,"Login Successful! Welcome Back!$"
@@ -35,24 +58,15 @@
     msgFileError db 13,10,"Error: Cannot open users.txt file.$"
     msgLockout db 13,10,"Locking Account.$"
     msgPress db 13,10,"Press any key to try again...$"
-    
-    ; Sample menu after login
-    msgMenu db 13,10,13,10,"=== Main Menu ===",13,10
-           db "1. View Profile",13,10
-           db "2. Settings",13,10
-           db "3. Logout",13,10
-           db "Enter choice: $"
 
     msgMenuTitle db 13,10, "=== APU Food Store System ===", 13,10, "$"
     msgMenu1 db "1. View Menu", 13,10, "$"
     msgMenu2 db "2. Order Food", 13,10, "$"
     msgMenu3 db "3. Calculate Total (with Tax)", 13,10, "$"
     msgMenu4 db "4. Restock", 13,10, "$"
-    msgMenu5 db "4. Generate Revenue Report", 13,10, "$"
-    msgMenu6 db "6. Logout", 13,10, "$"
+    msgMenu5 db "5. Logout", 13,10, "$"
     msgPrompt db "Enter your choice: $"
     msgInvalid db 13,10, "Invalid choice. Try again.", 13,10, "$"
-    msgLogout db 13,10, "Logging out to login screen...", 13,10, "$"
 
     ; Audit message templates
     auditLoginSuccess db " - LOGIN SUCCESS - User: $"
@@ -128,31 +142,45 @@ main:
     mov ax, @data
     mov ds, ax
     
-    lea dx, msgWelcome
-    call PrintString
+    call ClearScreen
+    call ShowStaticBanner
+    
+    ; Initialize burger positions for continuous animation
+    call InitializeBurgerPositions
       
+;--------------------------------------------------
+; Modified StartLogin to ensure banner is always visible
+;--------------------------------------------------
 StartLogin:
-
-    ; Get username
+    ; Clear input buffers before each login attempt
+    call ClearInputBuffers
+    
+    ; Make sure banner is displayed (in case it was cleared)
+    call ShowStaticBanner
+    
+    ; Position cursor for username prompt
+    mov ah, 02h
+    mov bh, 0
+    mov dh, 7          ; Row 8 (below banner at row 7)
+    mov dl, 0           ; Column 0
+    int 10h
+    
+    ; Get username with continuous animation
     lea dx, msgUser
     call PrintString
     lea bx, inputUser
-    call GetInput
+    call GetInputWithAnimation
 
-    ; Get password (masked)
+    ; Get password (masked) with continuous animation
     lea dx, msgPass
     call PrintString
     lea bx, inputPass
-    call GetMaskedInput
+    call GetMaskedInputWithAnimation
 
     ; Validate credentials from file
     call ValidateLogin
     cmp al, 1
     je LoginSuccess
-    
-    ; Login failed - log failed attempt
-    lea dx, auditLoginFail
-    call LogAuditEvent
     
     ; Login failed - increment attempt counter
     inc byte ptr [attemptCount]
@@ -163,29 +191,203 @@ StartLogin:
     cmp byte ptr [attemptCount], 3
     je AccountLocked
     
+    ; Wait for user to press a key before next attempt (with animation)
+    lea dx, msgPress
+    call PrintString
+    call WaitKeyWithAnimation
+    
+    ; Clear the failed login messages from screen
+    call ClearLoginArea
+    
     ; Continue to next attempt
     jmp StartLogin
 
 LoginSuccess:
-    ; Log successful login
-    lea dx, auditLoginSuccess
-    call LogAuditEvent
-    
     lea dx, msgSuccess
     call PrintString
-    call MainMenu
+    call ShowMenuWithAnimation
+    ; After menu returns (including logout), go back to login
     jmp StartLogin
 
 AccountLocked:
-    ; Log account lockout
-    lea dx, auditLockout
-    call LogAuditEvent
-    
     lea dx, msgLockout
     call PrintString
+    ; Wait a moment with animation before exit
+    call DelayWithAnimation
     ; Exit program
     mov ah, 4Ch
     int 21h
+    
+;--------------------------------------------------
+; Show menu with continuous animation (clears screen first)
+;--------------------------------------------------
+ShowMenuWithAnimation:
+    ; Clear everything except banner and burger animation
+    call ClearScreen
+    
+    ; Redraw the banner at the correct position
+    call ShowStaticBanner
+    
+    ; Position cursor after banner for menu display
+    mov ah, 02h
+    mov bh, 0
+    mov dh, 8          ; Row 8 (closer to banner at row 7)
+    mov dl, 0          ; Column 0
+    int 10h
+    
+    ; Display menu options
+    lea dx, msgMenu1
+    call PrintString
+    lea dx, msgMenu2
+    call PrintString
+    lea dx, msgMenu3
+    call PrintString
+    lea dx, msgMenu4
+    call PrintString
+    lea dx, msgMenu5
+    call PrintString
+    lea dx, msgPrompt
+    call PrintString
+    
+MenuWaitLoop:
+    ; Save current cursor position
+    push dx
+    mov ah, 03h         ; Get cursor position
+    mov bh, 0
+    int 10h
+    push dx
+    
+    ; Run animation
+    call ContinuousBackgroundAnimation
+    
+    ; Restore cursor position
+    pop dx
+    mov ah, 02h         ; Set cursor position
+    mov bh, 0
+    int 10h
+    pop dx
+    
+    ; Check for keyboard input
+    mov ah, 0Bh         ; Check keyboard status
+    int 21h
+    cmp al, 0           ; No key pressed
+    je MenuWaitLoop     ; Continue animation
+    
+    ; Get the key
+    mov ah, 01h
+    int 21h
+    
+    ; Handle menu choices
+    cmp al, '1'
+    je HandleViewMenu
+    cmp al, '2'
+    je HandleOrderFood
+    cmp al, '3'
+    je HandleCalculateTotal
+    cmp al, '4'
+    je HandleRestock
+    cmp al, '5'
+    je DoLogoutWithAnimation
+    
+    ; Invalid choice
+    call NewLine
+    lea dx, msgInvalid
+    call PrintString
+    lea dx, msgPress
+    call PrintString
+    call WaitKeyWithAnimation
+    
+    ; Clear screen and redisplay menu
+    call ClearAllExceptBanner
+    jmp ShowMenuWithAnimation
+
+HandleViewMenu:
+    jmp ShowFoodMenu
+
+HandleOrderFood:
+    jmp OrderFood
+
+HandleCalculateTotal:
+    jmp CalculateTotal
+
+HandleRestock:
+    jmp Restock
+
+;--------------------------------------------------
+; Logout with screen clear and return to login
+;--------------------------------------------------
+DoLogoutWithAnimation:
+    ; Clear the entire screen completely
+    call ClearScreen
+    
+    ; Show the static banner again
+    call ShowStaticBanner
+    
+    ; Clear input buffers to remove old username/password
+    call ClearInputBuffers
+    
+    ; Reset login attempt counter
+    mov byte ptr [attemptCount], 0
+    
+    ; Return to login (no need to jump, just return to main loop)
+    ret
+    
+ClearAllExceptBanner:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    ; Clear from row 8 to bottom of screen (leaving banner at row 7)
+    ; Banner is at row 7, burgers are at rows 2-6, so clear from row 8 down
+    mov dh, 8          ; Start row (after banner)
+    mov cx, 17         ; Number of rows to clear (8 to 24)
+    
+ClearAllLoop:
+    push cx
+    push dx
+    
+    ; Position cursor at start of row
+    mov ah, 02h
+    mov bh, 0
+    mov dl, 0           ; Column 0
+    int 10h
+    
+    ; Clear the entire row (80 spaces)
+    push cx
+    mov cx, 80
+    mov al, ' '
+ClearAllRowLoop:
+    mov ah, 0Eh         ; Teletype output
+    mov bh, 0
+    int 10h
+    loop ClearAllRowLoop
+    pop cx
+    
+    pop dx
+    pop cx
+    inc dh              ; Next row
+    loop ClearAllLoop
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret   
+ 
+;--------------------------------------------------
+; Initialize burger positions for smoother animation
+;--------------------------------------------------
+InitializeBurgerPositions:
+    mov burger1_x, 0
+    mov burger2_x, 18
+    mov burger3_x, 36
+    mov burger4_x, 54
+    mov burger1_y, 2
+    mov burger2_y, 2
+    mov burger3_y, 2
+    mov burger4_y, 2
+    ret
 
 ; Function to validate login credentials from file
 ValidateLogin:
@@ -327,8 +529,6 @@ ClearFileCredentials:
     pop ax
     ret
 
-
-
 ; Function to parse a word from file - SIMPLIFIED
 ParseWord:
     push cx
@@ -421,39 +621,282 @@ SkipDone:
     pop ax
     ret  
 
-DoLogout:
-    ; Log logout event
-    lea dx, auditLogout
-    call LogAuditEvent
+;--------------------------------------------------
+; Enhanced input buffer clearing (memory only, no screen clearing)
+;--------------------------------------------------
+ClearInputBuffers:
+    push ax
+    push cx
+    push di
     
-    lea dx, msgLogout
-    call PrintString
-    call WaitKey
-    call ClearScreen
+    ; Clear inputUser buffer
+    lea di, inputUser
+    mov cx, 20
+    mov al, 0
+    rep stosb
+    
+    ; Clear inputPass buffer
+    lea di, inputPass
+    mov cx, 20
+    mov al, 0
+    rep stosb
+    
+    pop di
+    pop cx
+    pop ax
+    ret
+
+;--------------------------------------------------
+; Clear login area of screen (updated for correct positioning)
+;--------------------------------------------------
+ClearLoginArea:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    ; Clear from row 8 to row 15 (login area after banner)
+    mov cx, 8           ; Number of rows to clear
+    mov dh, 8           ; Start row (after banner)
+    
+ClearLoginLoop:
+    push cx
+    push dx
+    
+    ; Position cursor at start of row
+    mov ah, 02h
+    mov bh, 0
+    mov dl, 0           ; Column 0
+    int 10h
+    
+    ; Clear the entire row (80 spaces)
+    mov cx, 80
+    mov al, ' '
+ClearRowLoop:
+    mov ah, 0Eh         ; Teletype output
+    mov bh, 0
+    int 10h
+    loop ClearRowLoop
+    
+    pop dx
+    pop cx
+    inc dh              ; Next row
+    loop ClearLoginLoop
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+    
+;--------------------------------------------------
+; Show static banner
+;--------------------------------------------------
+ShowStaticBanner:
+    push ax
+    push bx
+    push dx
+    
+    ; Display the banner text
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, 7          ; Row 10 for banner
+    mov dl, 0          
+    int 10h
+    
     lea dx, msgWelcome
     call PrintString
-    ret  
     
-; Function to log audit events
-; Input: DX = pointer to audit message template
-LogAuditEvent:
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------------------
+; Start background animation (non-blocking)
+;--------------------------------------------------
+StartBackgroundAnimation:
+    push ax
+    push bx
+    push cx
+    
+    ; Run a few animation frames
+    mov cx, 5           ; Just a few frames per call
+    
+BackgroundAnimLoop:
+    push cx
+    
+    ; Draw all burgers
+    call draw_all_burgers
+    call delay_frame
+    call clear_all_burgers
+    
+    ; Move all burgers to the right
+    inc burger1_x
+    inc burger2_x
+    inc burger3_x
+    inc burger4_x
+    
+    ; Check and reset burger 1
+    mov ax, burger1_x
+    cmp ax, max_x
+    jle check_bg_burger2
+    mov burger1_x, 0
+    
+check_bg_burger2:
+    ; Check and reset burger 2
+    mov ax, burger2_x
+    cmp ax, max_x
+    jle check_bg_burger3
+    mov burger2_x, 0
+    
+check_bg_burger3:
+    ; Check and reset burger 3
+    mov ax, burger3_x
+    cmp ax, max_x
+    jle check_bg_burger4
+    mov burger3_x, 0
+
+check_bg_burger4:
+    ; Check and reset burger 4
+    mov ax, burger4_x
+    cmp ax, max_x
+    jle continue_bg_animation
+    mov burger4_x, 0
+    
+continue_bg_animation:
+    pop cx
+    loop BackgroundAnimLoop
+    
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------------------
+; Draw all burgers at their current positions
+;--------------------------------------------------
+draw_all_burgers:
+    push ax
+    push bx
+    
+    ; Draw burger 1
+    mov ax, burger1_x
+    mov bx, burger1_y
+    call draw_burger_at
+    
+    ; Draw burger 2
+    mov ax, burger2_x
+    mov bx, burger2_y
+    call draw_burger_at
+    
+    ; Draw burger 3
+    mov ax, burger3_x
+    mov bx, burger3_y
+    call draw_burger_at
+    
+    ; Draw burger 4
+    mov ax, burger4_x
+    mov bx, burger4_y
+    call draw_burger_at
+    
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------------------
+; Clear all burgers at their current positions
+;--------------------------------------------------
+clear_all_burgers:
+    push ax
+    push bx
+    
+    ; Clear burger 1
+    mov ax, burger1_x
+    mov bx, burger1_y
+    call clear_burger_at
+    
+    ; Clear burger 2
+    mov ax, burger2_x
+    mov bx, burger2_y
+    call clear_burger_at
+    
+    ; Clear burger 3
+    mov ax, burger3_x
+    mov bx, burger3_y
+    call clear_burger_at
+    
+    ; Clear burger 4
+    mov ax, burger4_x
+    mov bx, burger4_y
+    call clear_burger_at
+    
+    
+    pop bx
+    pop ax
+    ret
+
+;--------------------------------------------------
+; Draw burger at position AX=x, BX=y
+;--------------------------------------------------
+; 3. Replace your draw_burger_at function with this simplified version:
+draw_burger_at:
     push ax
     push bx
     push cx
     push dx
     push si
-    push di
     
-    ; Get current date and time
-    call GetDateTime
+    mov cl, al         ; Save X position in CL
+    mov ch, bl         ; Save Y position in CH
     
-    ; Build audit message
-    call BuildAuditMessage
+    ; Set cursor position for line 1
+    mov ah, 02h
+    mov bh, 00h        ; Page 0
+    mov dh, ch         ; Row from saved Y
+    mov dl, cl         ; Column from saved X
+    int 10h
     
-    ; Write to audit file
-    call WriteAuditToFile
+    ; Print line 1
+    lea si, burger_line1
+    call print_string_burger
     
-    pop di
+    ; Set cursor position for line 2
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, ch         ; Base Y position
+    inc dh             ; Next row
+    mov dl, cl         ; X position
+    int 10h
+    
+    ; Print line 2
+    lea si, burger_line2
+    call print_string_burger
+    
+    ; Set cursor position for line 3
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, ch         ; Base Y position
+    add dh, 2          ; Next row
+    mov dl, cl         ; X position
+    int 10h
+    
+    ; Print line 3
+    lea si, burger_line3
+    call print_string_burger
+    
+    ; Set cursor position for line 4
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, ch         ; Base Y position
+    add dh, 3          ; Next row
+    mov dl, cl         ; X position
+    int 10h
+    
+    ; Print line 4
+    lea si, burger_line4
+    call print_string_burger
+    
     pop si
     pop dx
     pop cx
@@ -461,28 +904,62 @@ LogAuditEvent:
     pop ax
     ret
 
-; Function to get current date and time
-GetDateTime:
+;--------------------------------------------------
+; Clear burger at position AX=x, BX=y
+;--------------------------------------------------
+; 4. Replace your clear_burger_at function with this simplified version:
+clear_burger_at:
     push ax
     push bx
     push cx
     push dx
     
-    ; Get date
-    mov ah, 2Ah         ; Get system date
+    ; Clear line 1
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, bl         ; Row from BX
+    mov dl, al         ; Column from AX
+    int 10h
+    
+    mov ah, 09h
+    lea dx, clear_line
     int 21h
-    ; AL = day of week, CX = year, DH = month, DL = day
     
-    ; Convert date to string format (YYYY-MM-DD)
-    call FormatDate
+    ; Clear line 2
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, bl
+    inc dh
+    mov dl, al
+    int 10h
     
-    ; Get time
-    mov ah, 2Ch         ; Get system time
+    mov ah, 09h
+    lea dx, clear_line
     int 21h
-    ; CH = hour, CL = minute, DH = second, DL = centisecond
     
-    ; Convert time to string format (HH:MM:SS)
-    call FormatTime
+    ; Clear line 3
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, bl
+    add dh, 2
+    mov dl, al
+    int 10h
+    
+    mov ah, 09h
+    lea dx, clear_line
+    int 21h
+    
+    ; Clear line 4
+    mov ah, 02h
+    mov bh, 00h
+    mov dh, bl
+    add dh, 3
+    mov dl, al
+    int 10h
+    
+    mov ah, 09h
+    lea dx, clear_line
+    int 21h
     
     pop dx
     pop cx
@@ -490,301 +967,49 @@ GetDateTime:
     pop ax
     ret
 
-; Function to format date as YYYY-MM-DD
-FormatDate:
+;--------------------------------------------------
+; Delay frame for animation timing
+;--------------------------------------------------
+delay_frame:
     push ax
-    push bx
     push cx
-    push dx
+    
+    mov cx, delay_max
+delay_loop:
+    nop
+    nop
+    nop
+    loop delay_loop
+    
+    pop cx
+    pop ax
+    ret
+
+;--------------------------------------------------
+; Print null-terminated string at DS:SI (for burgers)
+;--------------------------------------------------
+print_string_burger:
+    push ax
     push si
     
-    lea si, dateStr
+print_loop_burger:
+    lodsb              ; Load byte from DS:SI into AL, increment SI
+    cmp al, 0          ; Check for null terminator
+    je print_done_burger ; If null, we're done
     
-    ; Format year (CX contains year)
-    mov ax, cx
-    call NumToStr4      ; Convert 4-digit year
+    mov ah, 0Eh        ; BIOS teletype output
+    mov bh, 00h        ; Page 0
+    mov bl, 07h        ; Normal attribute
+    int 10h            ; Print character
     
-    ; Add dash
-    mov byte ptr [si], '-'
-    inc si
+    jmp print_loop_burger ; Continue with next character
     
-    ; Format month (DH contains month)
-    mov al, dh
-    call NumToStr2      ; Convert 2-digit month
-    
-    ; Add dash
-    mov byte ptr [si], '-'
-    inc si
-    
-    ; Format day (DL contains day)
-    mov al, dl
-    call NumToStr2      ; Convert 2-digit day
-    
-    ; Null terminate
-    mov byte ptr [si], 0
-    
+print_done_burger:
     pop si
-    pop dx
-    pop cx
-    pop bx
     pop ax
     ret
-
-; Function to format time as HH:MM:SS
-FormatTime:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
     
-    lea si, timeStr
-    
-    ; Format hour (CH contains hour)
-    mov al, ch
-    call NumToStr2      ; Convert 2-digit hour
-    
-    ; Add colon
-    mov byte ptr [si], ':'
-    inc si
-    
-    ; Format minute (CL contains minute)
-    mov al, cl
-    call NumToStr2      ; Convert 2-digit minute
-    
-    ; Add colon
-    mov byte ptr [si], ':'
-    inc si
-    
-    ; Format second (DH contains second)
-    mov al, dh
-    call NumToStr2      ; Convert 2-digit second
-    
-    ; Null terminate
-    mov byte ptr [si], 0
-    
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to convert number to 4-digit string
-NumToStr4:
-    push ax
-    push bx
-    push cx
-    push dx
-    
-    mov bx, 1000
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    mov ax, dx
-    mov bx, 100
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    mov ax, dx
-    mov bx, 10
-    xor dx, dx
-    div bx
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    add dl, '0'
-    mov [si], dl
-    inc si
-    
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to convert number to 2-digit string
-NumToStr2:
-    push ax
-    push bx
-    push dx
-    
-    mov bl, 10
-    xor ah, ah
-    div bl
-    add al, '0'
-    mov [si], al
-    inc si
-    
-    add ah, '0'
-    mov [si], ah
-    inc si
-    
-    pop dx
-    pop bx
-    pop ax
-    ret
-
-; Function to build audit message
-BuildAuditMessage:
-    push ax
-    push bx
-    push cx
-    push si
-    push di
-    
-    lea di, auditBuffer
-    
-    ; Copy date
-    lea si, dateStr
-    call CopyString
-    
-    ; Add space
-    mov byte ptr [di], ' '
-    inc di
-    
-    ; Copy time
-    lea si, timeStr
-    call CopyString
-    
-    ; Copy audit message template (without the $ terminator)
-    mov si, dx          ; DX contains pointer to message template
-    call CopyStringNoTerminator
-    
-    ; Copy username
-    lea si, inputUser
-    call CopyString
-    
-    ; Add newline
-    mov byte ptr [di], 13
-    inc di
-    mov byte ptr [di], 10
-    inc di
-    
-    ; Null terminate
-    mov byte ptr [di], 0
-    
-    pop di
-    pop si
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to copy string with null terminator
-CopyString:
-    push ax
-CopyStringLoop:
-    mov al, [si]
-    cmp al, 0
-    je CopyStringDone
-    mov [di], al
-    inc si
-    inc di
-    jmp CopyStringLoop
-CopyStringDone:
-    pop ax
-    ret
-
-; Function to copy string without $ terminator
-CopyStringNoTerminator:
-    push ax
-CopyStringNoTermLoop:
-    mov al, [si]
-    cmp al, 0
-    je CopyStringNoTermDone
-    cmp al, '$'
-    je CopyStringNoTermDone
-    mov [di], al
-    inc si
-    inc di
-    jmp CopyStringNoTermLoop
-CopyStringNoTermDone:
-    pop ax
-    ret
-
-; Function to write audit message to file
-WriteAuditToFile:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-    
-    ; Open audit file for append (or create if not exists)
-    mov ah, 3Dh         ; Open file
-    mov al, 2           ; Read/write mode
-    lea dx, auditfile
-    int 21h
-    jnc FileOpenSuccess
-    
-    ; File doesn't exist, create it
-    mov ah, 3Ch         ; Create file
-    mov cx, 0           ; Normal file attribute
-    lea dx, auditfile
-    int 21h
-    jc WriteAuditError
-    
-FileOpenSuccess:
-    mov [audithandle], ax
-    
-    ; Seek to end of file
-    mov ah, 42h         ; Seek
-    mov al, 2           ; From end of file
-    mov bx, [audithandle]
-    mov cx, 0
-    mov dx, 0
-    int 21h
-    
-    ; Calculate message length
-    lea si, auditBuffer
-    call StrLen
-    mov cx, ax          ; Message length in CX
-    
-    ; Write to file
-    mov ah, 40h         ; Write to file
-    mov bx, [audithandle]
-    lea dx, auditBuffer
-    int 21h
-    jc WriteAuditError
-    
-    ; Close file
-    mov ah, 3Eh
-    mov bx, [audithandle]
-    int 21h
-    
-WriteAuditError:
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-; Function to calculate string length
-StrLen:
-    push bx
-    push si
-    mov bx, si
-    mov ax, 0
-StrLenLoop:
-    cmp byte ptr [si], 0
-    je StrLenDone
-    inc si
-    inc ax
-    jmp StrLenLoop
-StrLenDone:
-    pop si
-    pop bx
-    ret   
-
+; Main Menu
 MainMenu:
 MenuLoop:
     lea dx, msgMenuTitle
@@ -797,7 +1022,7 @@ MenuLoop:
     call PrintString
     lea dx, msgMenu4
     call PrintString
-    lea dx, msgMenu6
+    lea dx, msgMenu5
     call PrintString
     lea dx, msgPrompt
     call PrintString
@@ -828,9 +1053,9 @@ CheckOption4:
     jmp Restock
 
 CheckOption5:
-    cmp bl, '6'
+    cmp bl, '5'
     jne InvalidChoice
-    jmp DoLogout
+    jmp DoLogoutWithAnimation
 
 InvalidChoice:
     lea dx, msgInvalid
@@ -1674,35 +1899,62 @@ PrintNumRed:
     pop ax
     ret
     
-
-
 ; ========== Utility Functions ==========
-
-GetInput:
+;--------------------------------------------------
+; Enhanced input function with continuous animation
+;--------------------------------------------------
+GetInputWithAnimation:
     push bx             ; Save original buffer pointer
     mov si, bx          ; Use SI to track current position
     mov cx, 0           ; Character counter
-GetInputLoop:
-    mov ah, 08h         ; Get character without echo (like password input)
+    
+GetInputAnimLoop:
+    ; Save current cursor position before animation
+    push cx
+    push dx
+    mov ah, 03h         ; Get cursor position
+    mov bh, 0           ; Page 0
+    int 10h             ; Returns position in DH=row, DL=column
+    push dx             ; Save cursor position
+    
+    ; Run continuous background animation
+    call ContinuousBackgroundAnimation
+    
+    ; Restore cursor position after animation
+    pop dx              ; Restore cursor position
+    mov ah, 02h         ; Set cursor position
+    mov bh, 0           ; Page 0
+    int 10h             ; Set cursor back to saved position
+    pop dx
+    pop cx
+    
+    ; Check for keyboard input (non-blocking)
+    mov ah, 0Bh         ; Check keyboard status
+    int 21h
+    cmp al, 0           ; No key pressed
+    je GetInputAnimLoop ; Continue animation
+    
+    ; Get the actual key
+    mov ah, 08h         ; Get character without echo
     int 21h
     cmp al, 13          ; Enter key
-    je GetInputDone
+    je GetInputAnimDone
     cmp al, 8           ; Backspace key
-    je HandleBackspace
+    je HandleBackspaceAnim
     cmp cx, 19          ; Limit input length
-    jae GetInputLoop
+    jae GetInputAnimLoop
     mov [si], al        ; Store character
     inc si
     inc cx
-    ; Display the character (since we're using non-echo input)
+    ; Display the character
     mov dl, al
     mov ah, 02h
     int 21h
-    jmp GetInputLoop
+    jmp GetInputAnimLoop
     
-HandleBackspace:
+HandleBackspaceAnim:
     cmp cx, 0           ; Check if buffer is empty
-    je GetInputLoop     ; If empty, ignore backspace
+    je GetInputAnimLoop ; If empty, ignore backspace
     dec si              ; Move buffer pointer back
     dec cx              ; Decrease counter
     mov byte ptr [si], 0 ; Clear the character in buffer
@@ -1715,37 +1967,67 @@ HandleBackspace:
     mov dl, 8           ; Print backspace again to position cursor
     mov ah, 02h
     int 21h
-    jmp GetInputLoop
+    jmp GetInputAnimLoop
     
-GetInputDone:
+GetInputAnimDone:
     mov byte ptr [si], 0 ; Null terminate
     pop bx              ; Restore original buffer pointer
     ret
 
-GetMaskedInput:
+;--------------------------------------------------
+; Enhanced masked input function with continuous animation
+;--------------------------------------------------
+GetMaskedInputWithAnimation:
     push bx             ; Save original buffer pointer
     mov si, bx          ; Use SI to track current position
     mov cx, 0           ; Character counter
-MaskedLoop:
+    
+MaskedAnimLoop:
+    ; Save current cursor position before animation
+    push cx
+    push dx
+    mov ah, 03h         ; Get cursor position
+    mov bh, 0           ; Page 0
+    int 10h             ; Returns position in DH=row, DL=column
+    push dx             ; Save cursor position
+    
+    ; Run continuous background animation
+    call ContinuousBackgroundAnimation
+    
+    ; Restore cursor position after animation
+    pop dx              ; Restore cursor position
+    mov ah, 02h         ; Set cursor position
+    mov bh, 0           ; Page 0
+    int 10h             ; Set cursor back to saved position
+    pop dx
+    pop cx
+    
+    ; Check for keyboard input (non-blocking)
+    mov ah, 0Bh         ; Check keyboard status
+    int 21h
+    cmp al, 0           ; No key pressed
+    je MaskedAnimLoop   ; Continue animation
+    
+    ; Get the actual key
     mov ah, 08h         ; Get character without echo
     int 21h
     cmp al, 13          ; Enter key
-    je MaskedDone
+    je MaskedAnimDone
     cmp al, 8           ; Backspace key
-    je HandleMaskedBackspace
+    je HandleMaskedBackspaceAnim
     cmp cx, 19          ; Limit input length
-    jae MaskedLoop
+    jae MaskedAnimLoop
     mov [si], al        ; Store character
     inc si
     inc cx
     mov dl, '*'         ; Show asterisk
     mov ah, 02h
     int 21h
-    jmp MaskedLoop
+    jmp MaskedAnimLoop
     
-HandleMaskedBackspace:
+HandleMaskedBackspaceAnim:
     cmp cx, 0           ; Check if buffer is empty
-    je MaskedLoop       ; If empty, ignore backspace
+    je MaskedAnimLoop   ; If empty, ignore backspace
     dec si              ; Move buffer pointer back
     dec cx              ; Decrease counter
     mov byte ptr [si], 0 ; Clear the character in buffer
@@ -1758,9 +2040,9 @@ HandleMaskedBackspace:
     mov dl, 8           ; Print backspace again to position cursor
     mov ah, 02h
     int 21h
-    jmp MaskedLoop
+    jmp MaskedAnimLoop
     
-MaskedDone:
+MaskedAnimDone:
     mov byte ptr [si], 0 ; Null terminate
     pop bx              ; Restore original buffer pointer
     ret
@@ -1795,7 +2077,32 @@ NewLine:
     int 21h
     ret
 
-WaitKey:
+WaitKeyWithAnimation:
+WaitKeyAnimLoop:
+    ; Save current cursor position
+    push dx
+    mov ah, 03h         ; Get cursor position
+    mov bh, 0
+    int 10h
+    push dx
+    
+    ; Run animation
+    call ContinuousBackgroundAnimation
+    
+    ; Restore cursor position
+    pop dx
+    mov ah, 02h         ; Set cursor position
+    mov bh, 0
+    int 10h
+    pop dx
+    
+    ; Check for keyboard input
+    mov ah, 0Bh         ; Check keyboard status
+    int 21h
+    cmp al, 0           ; No key pressed
+    je WaitKeyAnimLoop  ; Continue animation
+    
+    ; Get the key
     mov ah, 08h
     int 21h
     ret
@@ -1902,5 +2209,430 @@ PrintDecimalFixed:
     pop cx
     pop ax
     ret
+    
+;--------------------------------------------------
+; Delay with animation (for various pauses)
+;--------------------------------------------------
+DelayWithAnimation:
+    push cx
+    mov cx, 30          ; Number of animation frames to show
+    
+DelayAnimLoop:
+    push cx
+    call ContinuousBackgroundAnimation
+    call delay_frame    ; Use existing delay
+    pop cx
+    loop DelayAnimLoop
+    
+    pop cx
+    ret
 
+;--------------------------------------------------
+; Continuous background animation (smoother than before)
+;--------------------------------------------------
+ContinuousBackgroundAnimation:
+    push ax
+    push bx
+    push cx
+    
+    ; Draw all burgers at current positions
+    call draw_all_burgers
+    
+    ; Small delay for smoother animation
+    call delay_frame
+    
+    ; Clear all burgers
+    call clear_all_burgers
+    
+    ; Move all burgers to the right
+    inc burger1_x
+    inc burger2_x
+    inc burger3_x
+    inc burger4_x
+    
+    ; Check and reset burger 1
+    mov ax, burger1_x
+    cmp ax, max_x
+    jle check_cont_burger2
+    mov burger1_x, 0
+    
+check_cont_burger2:
+    ; Check and reset burger 2
+    mov ax, burger2_x
+    cmp ax, max_x
+    jle check_cont_burger3
+    mov burger2_x, 0
+    
+check_cont_burger3:
+    ; Check and reset burger 3
+    mov ax, burger3_x
+    cmp ax, max_x
+    jle check_cont_burger4
+    mov burger3_x, 0
+    
+check_cont_burger4:
+    ; Check and reset burger 3
+    mov ax, burger4_x
+    cmp ax, max_x
+    jle cont_animation_done
+    mov burger4_x, 0
+    
+cont_animation_done:
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Writing to audit.txt
+; Function to log audit events
+; Input: DX = pointer to audit message template
+LogAuditEvent:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    
+    ; Get current date and time
+    call GetDateTime
+    
+    ; Build audit message
+    call BuildAuditMessage
+    
+    ; Write to audit file
+    call WriteAuditToFile
+    
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to get current date and time
+GetDateTime:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    ; Get date
+    mov ah, 2Ah         ; Get system date
+    int 21h
+    ; AL = day of week, CX = year, DH = month, DL = day
+    
+    ; Convert date to string format (YYYY-MM-DD)
+    call FormatDate
+    
+    ; Get time
+    mov ah, 2Ch         ; Get system time
+    int 21h
+    ; CH = hour, CL = minute, DH = second, DL = centisecond
+    
+    ; Convert time to string format (HH:MM:SS)
+    call FormatTime
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to format date as YYYY-MM-DD
+FormatDate:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    lea si, dateStr
+    
+    ; Format year (CX contains year)
+    mov ax, cx
+    call NumToStr4      ; Convert 4-digit year
+    
+    ; Add dash
+    mov byte ptr [si], '-'
+    inc si
+    
+    ; Format month (DH contains month)
+    mov al, dh
+    call NumToStr2      ; Convert 2-digit month
+    
+    ; Add dash
+    mov byte ptr [si], '-'
+    inc si
+    
+    ; Format day (DL contains day)
+    mov al, dl
+    call NumToStr2      ; Convert 2-digit day
+    
+    ; Null terminate
+    mov byte ptr [si], 0
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to format time as HH:MM:SS
+FormatTime:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    lea si, timeStr
+    
+    ; Format hour (CH contains hour)
+    mov al, ch
+    call NumToStr2      ; Convert 2-digit hour
+    
+    ; Add colon
+    mov byte ptr [si], ':'
+    inc si
+    
+    ; Format minute (CL contains minute)
+    mov al, cl
+    call NumToStr2      ; Convert 2-digit minute
+    
+    ; Add colon
+    mov byte ptr [si], ':'
+    inc si
+    
+    ; Format second (DH contains second)
+    mov al, dh
+    call NumToStr2      ; Convert 2-digit second
+    
+    ; Null terminate
+    mov byte ptr [si], 0
+    
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert number to 4-digit string
+NumToStr4:
+    push ax
+    push bx
+    push cx
+    push dx
+    
+    mov bx, 1000
+    xor dx, dx
+    div bx
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    mov ax, dx
+    mov bx, 100
+    xor dx, dx
+    div bx
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    mov ax, dx
+    mov bx, 10
+    xor dx, dx
+    div bx
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    add dl, '0'
+    mov [si], dl
+    inc si
+    
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to convert number to 2-digit string
+NumToStr2:
+    push ax
+    push bx
+    push dx
+    
+    mov bl, 10
+    xor ah, ah
+    div bl
+    add al, '0'
+    mov [si], al
+    inc si
+    
+    add ah, '0'
+    mov [si], ah
+    inc si
+    
+    pop dx
+    pop bx
+    pop ax
+    ret
+
+; Function to build audit message
+BuildAuditMessage:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+    
+    lea di, auditBuffer
+    
+    ; Copy date
+    lea si, dateStr
+    call CopyString
+    
+    ; Add space
+    mov byte ptr [di], ' '
+    inc di
+    
+    ; Copy time
+    lea si, timeStr
+    call CopyString
+    
+    ; Copy audit message template (without the $ terminator)
+    mov si, dx          ; DX contains pointer to message template
+    call CopyStringNoTerminator
+    
+    ; Copy username
+    lea si, inputUser
+    call CopyString
+    
+    ; Add newline
+    mov byte ptr [di], 13
+    inc di
+    mov byte ptr [di], 10
+    inc di
+    
+    ; Null terminate
+    mov byte ptr [di], 0
+    
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to copy string with null terminator
+CopyString:
+    push ax
+CopyStringLoop:
+    mov al, [si]
+    cmp al, 0
+    je CopyStringDone
+    mov [di], al
+    inc si
+    inc di
+    jmp CopyStringLoop
+CopyStringDone:
+    pop ax
+    ret
+
+; Function to copy string without $ terminator
+CopyStringNoTerminator:
+    push ax
+CopyStringNoTermLoop:
+    mov al, [si]
+    cmp al, 0
+    je CopyStringNoTermDone
+    cmp al, '$'
+    je CopyStringNoTermDone
+    mov [di], al
+    inc si
+    inc di
+    jmp CopyStringNoTermLoop
+CopyStringNoTermDone:
+    pop ax
+    ret
+
+; Function to write audit message to file
+WriteAuditToFile:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    
+    ; Open audit file for append (or create if not exists)
+    mov ah, 3Dh         ; Open file
+    mov al, 2           ; Read/write mode
+    lea dx, auditfile
+    int 21h
+    jnc FileOpenSuccess
+    
+    ; File doesn't exist, create it
+    mov ah, 3Ch         ; Create file
+    mov cx, 0           ; Normal file attribute
+    lea dx, auditfile
+    int 21h
+    jc WriteAuditError
+    
+FileOpenSuccess:
+    mov [audithandle], ax
+    
+    ; Seek to end of file
+    mov ah, 42h         ; Seek
+    mov al, 2           ; From end of file
+    mov bx, [audithandle]
+    mov cx, 0
+    mov dx, 0
+    int 21h
+    
+    ; Calculate message length
+    lea si, auditBuffer
+    call StrLen
+    mov cx, ax          ; Message length in CX
+    
+    ; Write to file
+    mov ah, 40h         ; Write to file
+    mov bx, [audithandle]
+    lea dx, auditBuffer
+    int 21h
+    jc WriteAuditError
+    
+    ; Close file
+    mov ah, 3Eh
+    mov bx, [audithandle]
+    int 21h
+    
+WriteAuditError:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; Function to calculate string length
+StrLen:
+    push bx
+    push si
+    mov bx, si
+    mov ax, 0
+StrLenLoop:
+    cmp byte ptr [si], 0
+    je StrLenDone
+    inc si
+    inc ax
+    jmp StrLenLoop
+StrLenDone:
+    pop si
+    pop bx
+    ret
+    
 end main
