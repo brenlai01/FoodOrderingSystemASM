@@ -182,6 +182,10 @@ StartLogin:
     cmp al, 1
     je LoginSuccess
     
+    ; Login failed - log failed attempt
+    lea dx, auditLoginFail
+    call LogAuditEvent
+    
     ; Login failed - increment attempt counter
     inc byte ptr [attemptCount]
     lea dx, msgFail
@@ -203,6 +207,9 @@ StartLogin:
     jmp StartLogin
 
 LoginSuccess:
+    lea dx, auditLoginSuccess
+    call LogAuditEvent
+    
     lea dx, msgSuccess
     call PrintString
     call ShowMenuWithAnimation
@@ -210,6 +217,9 @@ LoginSuccess:
     jmp StartLogin
 
 AccountLocked:
+    lea dx, auditLockout
+    call LogAuditEvent
+    
     lea dx, msgLockout
     call PrintString
     ; Wait a moment with animation before exit
