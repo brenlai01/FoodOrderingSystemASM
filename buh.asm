@@ -1136,7 +1136,6 @@ ProcessRestock:
     sub bl, '0'
     mov si, bx
     
-    ; Add 10 units to inventory
     call AddRestockItem
     ret
 
